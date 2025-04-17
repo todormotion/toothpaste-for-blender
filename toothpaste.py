@@ -18,6 +18,29 @@ from bpy.types import Operator, Panel, AddonPreferences
 
 # --- Core SVG Clipboard Import Logic (from __init__.py, adapted) ---
 
+svg_string = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="957px" height="570px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <g transform="matrix(1,0,0,1,-61.5093,-1866.07)">
+        <g transform="matrix(1,0,-0.45568,1,116.024,1610.95)">
+            <path d="M868.795,607.303L868.795,824.88L763.012,824.88L763.012,255.12L868.795,255.12L868.795,440.04L763.015,375.167L868.795,607.303Z" style="fill:white;"/>
+        </g>
+        <g transform="matrix(1,0,-0.45568,1,-17.6466,1610.95)">
+            <path d="M868.795,255.12L868.795,824.88L805.789,824.88L549.309,255.12L655.092,255.12L763.012,494.86L763.012,255.12L868.795,255.12Z" style="fill:white;"/>
+        </g>
+        <g transform="matrix(-1,0,0.45568,-1,814.051,2690.95)">
+            <path d="M868.795,255.12L868.795,824.88L805.789,824.88L549.309,255.12L655.092,255.12L763.012,494.86L763.012,255.12L868.795,255.12Z" style="fill:white;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,0,704.235)">
+            <path d="M878.828,1427.21L802.607,1362.33L893.971,1161.83L1018.49,1161.83L1018.49,1514.46L763.385,1731.59L634.343,1731.59L708.083,1569.77L708.083,1668.74L807.216,1584.36L807.149,1584.51L935.418,1475.33L878.828,1427.21Z" style="fill:white;"/>
+        </g>
+        <g transform="matrix(1.53168e-16,2.50142,-1.47013,9.00197e-17,2963.3,197.865)">
+            <path d="M792.235,1402.96L849.575,1517.64L734.895,1517.64L792.235,1402.96Z" style="fill:rgb(195,247,58);"/>
+        </g>
+    </g>
+</svg>
+"""
+
 def get_clipboard_svg():
     svg = bpy.context.window_manager.clipboard
     if "<svg" not in svg:
