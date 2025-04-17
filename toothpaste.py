@@ -19,6 +19,56 @@ def get_clipboard_svg():
     if "<svg" not in svg:
         raise ValueError("Clipboard does not contain valid SVG data.")
     return svg
+def convert_shape_to_path(element):
+    tag = element.tag.split('}')[-1]
+    if tag == 'rect':
+        x = float(element.get('x', 0))
+        y = float(element.get('y', 0))
+        width = float(element.get('width', 0))
+        height = float(element.get('height', 0))
+        d = f"M{x},{y} h{width} v{height} h{-width} Z"
+        return d
+
+    elif tag == 'circle':
+        cx = float(element.get('cx', 0))
+        cy = float(element.get('cy', 0))
+        r = float(element.get('r', 0))
+        d = f"M{cx - r},{cy} A{r},{r} 0 1,0 {cx + r},{cy} A{r},{r} 0 1,0 {cx - r},{cy} Z"
+        return d
+
+    elif tag == 'ellipse':
+        cx = float(element.get('cx', 0))
+        cy = float(element.get('cy', 0))
+        rx = float(element.get('rx', 0))
+        ry = float(element.get('ry', 0))
+        d = f"M{cx - rx},{cy} A{rx},{ry} 0 1,0 {cx + rx},{cy} A{rx},{ry} 0 1,0 {cx - rx},{cy} Z"
+        return d
+
+    elif tag == 'line':
+        x1 = float(element.get('x1', 0))
+        y1 = float(element.get('y1', 0))
+        x2 = float(element.get('x2', 0))
+        y2 = float(element.get('y2', 0))
+        d = f"M{x1},{y1} L{x2},{y2}"
+        return d
+
+    elif tag == 'polyline':
+        points = element.get('points', '').strip().replace(',', ' ')
+        coords = points.split()
+        if len(coords) < 4:
+            return None
+        d = f"M{coords[0]},{coords[1]}" + "".join(f" L{coords[i]},{coords[i+1]}" for i in range(2, len(coords), 2))
+        return d
+
+    elif tag == 'polygon':
+        points = element.get('points', '').strip().replace(',', ' ')
+        coords = points.split()
+        if len(coords) < 4:
+            return None
+        d = f"M{coords[0]},{coords[1]}" + "".join(f" L{coords[i]},{coords[i+1]}" for i in range(2, len(coords), 2)) + " Z"
+        return d
+
+    return None
 
 def parse_svg(svg_data):
     ns = {
@@ -34,7 +84,18 @@ def parse_svg(svg_data):
     layers = []
     for idx, group in enumerate(root.findall("svg:g", ns)):
         name = group.attrib.get("id") or group.attrib.get("{http://www.inkscape.org/namespaces/inkscape}label") or f"Layer_{idx+1}"
-        paths = [elem.attrib.get("d") for elem in group.findall(".//svg:path", ns) if elem.attrib.get("d")]
+        paths = []
+        for elem in group.iter():
+            tag = elem.tag.split('}')[-1]
+            if tag == 'path':
+                d = elem.attrib.get("d")
+                if d:
+                    paths.append(d)
+            elif tag in ['rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']:
+                d = convert_shape_to_path(elem)
+                if d:
+                    paths.append(d)
+                
         if not paths:
             continue
 
