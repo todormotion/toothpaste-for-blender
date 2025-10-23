@@ -10,7 +10,7 @@ maintainer = "Todor Hlebarov <todor@cosmonavt.studio>"
 type = "add-on"
 
 # # Optional: link to documentation, support, source files, etc
-# website = "https://extensions.blender.org/add-ons/my-example-package/"
+website = "https://gitlab.com/todor.motion/toothpaste-for-blender"
 
 # # Optional: tag list defined by Blender and server, see:
 # # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
@@ -27,10 +27,10 @@ license = [
   "SPDX:GPL-3.0-or-later",
 ]
 # # Optional: required by some licenses.
-# copyright = [
-#   "2019-2025 Cosmonavt Ltd.",
-#   "2019 Cosmonavt Ltd.",
-# ]
+ copyright = [
+   "2019-2025 Cosmonavt Ltd.",
+   "2019 Cosmonavt Ltd.",
+ ]
 
 # # Optional: list of supported platforms. If omitted, the extension will be available in all operating systems.
 # platforms = ["windows-x64", "macos-arm64", "linux-x64"]
