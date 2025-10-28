@@ -230,7 +230,6 @@ See Blender's extension licensing requirements: https://docs.blender.org/manual/
 
 ## Support
 
-- **Issues:** https://github.com/anthropics/claude-code/issues
 - **Documentation:** See LIMITATIONS.md for feature details
 - **Community:** Blender Artists forum
 
