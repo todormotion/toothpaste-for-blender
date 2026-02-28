@@ -1637,17 +1637,58 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
             except Exception:
                 pass
 
+    mask_layers = target_layer.mask_layers
     entry = None
-    for add_arg in (mask_layer, mask_name, None):
-        if entry is not None:
-            break
+
+    def _last_mask_entry() -> Optional[object]:
         try:
-            if add_arg is None:
-                entry = target_layer.mask_layers.add()
-            else:
-                entry = target_layer.mask_layers.add(add_arg)
+            return mask_layers[-1] if len(mask_layers) > 0 else None
         except Exception:
-            entry = None
+            return None
+
+    def _try_add_mask_entry() -> Optional[object]:
+        add_calls = []
+        if hasattr(mask_layers, "add"):
+            add_calls.extend(
+                [
+                    lambda: mask_layers.add(mask_layer),
+                    lambda: mask_layers.add(mask_name),
+                    lambda: mask_layers.add(name=mask_name),
+                    lambda: mask_layers.add(),
+                ]
+            )
+        if hasattr(mask_layers, "new"):
+            add_calls.extend(
+                [
+                    lambda: mask_layers.new(mask_name),
+                    lambda: mask_layers.new(),
+                ]
+            )
+
+        for add_call in add_calls:
+            try:
+                before_len = len(mask_layers)
+            except Exception:
+                before_len = -1
+            try:
+                created = add_call()
+            except Exception:
+                continue
+
+            if created is not None:
+                return created
+
+            try:
+                after_len = len(mask_layers)
+            except Exception:
+                after_len = before_len
+            if after_len > before_len:
+                newest = _last_mask_entry()
+                if newest is not None:
+                    return newest
+        return None
+
+    entry = _try_add_mask_entry()
 
     if entry is not None and hasattr(entry, "name"):
         try:
@@ -1663,7 +1704,9 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
     if has_mask_binding():
         return True
 
+    # Fallback for Blender builds where direct mask_layers mutation is not enough.
     layer_collection = getattr(gp_obj.data, "layers", None)
+    previous_active_layer_index = None
     if layer_collection and hasattr(layer_collection, "active"):
         try:
             layer_collection.active = target_layer
@@ -1671,6 +1714,7 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
             pass
     if layer_collection and hasattr(layer_collection, "active_index"):
         try:
+            previous_active_layer_index = int(layer_collection.active_index)
             target_index = next(
                 (idx for idx, layer in enumerate(layer_collection) if getattr(layer, "name", "") == getattr(target_layer, "name", "")),
                 -1,
@@ -1688,10 +1732,15 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
 
     if op is not None:
         previous_selection = []
+        previous_active_object = None
         try:
             previous_selection = list(bpy.context.selected_objects)
         except Exception:
             previous_selection = []
+        try:
+            previous_active_object = bpy.context.view_layer.objects.active
+        except Exception:
+            previous_active_object = None
 
         for obj in previous_selection:
             try:
@@ -1715,7 +1764,10 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
                 "mask_name": mask_name,
             },
         )
-        result = op(**kwargs)
+        try:
+            op(**kwargs)
+        except Exception:
+            pass
 
         try:
             gp_obj.select_set(False)
@@ -1726,9 +1778,17 @@ def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_laye
                 obj.select_set(True)
             except Exception:
                 pass
+        if previous_active_object is not None:
+            try:
+                bpy.context.view_layer.objects.active = previous_active_object
+            except Exception:
+                pass
 
-        if "CANCELLED" in result:
-            return has_mask_binding()
+    if layer_collection and hasattr(layer_collection, "active_index") and previous_active_layer_index is not None:
+        try:
+            layer_collection.active_index = previous_active_layer_index
+        except Exception:
+            pass
 
     return has_mask_binding()
 

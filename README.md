@@ -1,249 +1,136 @@
 # ToothPaste for Blender v1.1.0
 
-**Paste SVG from clipboard directly into Blender as Grease Pencil or Curve objects**
+Paste SVG content from clipboard into Blender as Grease Pencil, Curves, Text, and Images.
 
-ToothPaste is a Blender addon that allows you to quickly import SVG graphics from your clipboard into Blender's Grease Pencil system. Perfect for motion graphics, 2D animation, and integrating vector artwork into your 3D projects.
+## Current Scope
+
+ToothPaste is focused on Blender 4.3+ (Grease Pencil v3) and supports practical SVG copy/paste workflows from:
+- Affinity Designer
+- Adobe Illustrator
+- Figma
+- Inkscape
 
 ## Features
 
-✅ **Paste SVG directly from clipboard** - No need to save files
-✅ **Grease Pencil v3 support** - Works with Blender 4.3+
-✅ **Curve import mode** - Paste SVG as curve objects
-✅ **Shape conversion** - Rectangles, circles, ellipses, lines, polygons, and polylines automatically converted to paths
-✅ **Layer preservation** - SVG groups (`<g>`) imported as separate Grease Pencil layers
-✅ **Mask + clip reconstruction** - Uses GP masks and holdout layers where supported
-✅ **Text support** - SVG `<text>` imported as Blender font objects
-✅ **Image support** - SVG `<image>` imported as Blender image empties
-✅ **Layer splitting** - Split Grease Pencil layers into individual objects with one click
-✅ **Multi-editor support** - Works with SVGs from Adobe Illustrator, Affinity Designer, Inkscape, and more
+- Paste SVG from clipboard as Grease Pencil (`Paste as Grease Pencil`)
+- Paste SVG from clipboard as Curves (`Paste as Curves`)
+- Split imported SVG into GP layers (`Split into GP Layers`)
+- Split existing multi-layer GP object into separate GP objects (`Split layers into objects`)
+- Rebuild SVG mask/clip relationships using GP layer masks + holdout where possible
+- Import SVG text as Blender `FONT` objects
+- Import SVG `<image>` elements (embedded base64 or valid local paths)
+- Paste bitmap image from clipboard using Blender built-in image paste
+- Paste image as `Mesh Plane` or `Reference`
+- Paste location controls for all modes (`World Origin` or `Cursor`)
+- GP material mapping for fill + stroke color
+- Partial gradient mapping from SVG gradients to GP Fill Gradient
+
+## Gradient Support (Partial)
+
+Gradients are supported on a best-effort basis for Grease Pencil fill materials:
+- Linear and radial SVG gradients are detected
+- Base/secondary colors are mapped from gradient stops
+- Gradient transform/location/rotation/scale are approximated to GP material controls
+
+Important:
+- Gradient mapping is still not 1:1 with source editors in all cases
+- Some gradients will need manual tweaking after import
+- This is currently partial support, not full SVG gradient parity
 
 ## Requirements
 
-- **Blender 4.3.0 or later** (Grease Pencil v3 required)
-- Supported operating systems: Windows, macOS, Linux
+- Blender 4.3.0+
+- Windows, macOS, or Linux
 
 ## Installation
 
-### Method 1: Install from ZIP (Recommended)
-
-1. Download the latest release ZIP file
-2. Open Blender
-3. Go to **Edit > Preferences > Add-ons**
-4. Click **Install...** button (top right)
-5. Select the downloaded ZIP file
-6. Enable the addon by checking the box next to "Import-Export: ToothPaste for Blender"
-
-### Method 2: Manual Installation
-
-1. Download or clone this repository
-2. Copy the entire folder to your Blender addons directory:
-   - **Windows:** `%APPDATA%\Blender Foundation\Blender\[version]\scripts\addons\`
-   - **macOS:** `~/Library/Application Support/Blender/[version]/scripts/addons/`
-   - **Linux:** `~/.config/blender/[version]/scripts/addons/`
-3. Restart Blender
-4. Enable the addon in Preferences > Add-ons
+1. Open Blender
+2. Go to `Edit > Preferences > Add-ons`
+3. Click `Install...`
+4. Select the addon ZIP (or repository folder ZIP)
+5. Enable `Import-Export: ToothPaste for Blender`
 
 ## Usage
 
-### Importing SVG from Clipboard
+1. Copy SVG content from your design app
+2. Open `View3D > Sidebar (N) > ToothPaste`
+3. Use the grouped tools:
+   - `Grease Pencil`
+   - `Curves & Text`
+   - `Images`
+   - `Paste at:`
 
-1. Copy SVG code to your clipboard:
-   - In your SVG editor: Select artwork → Copy (or Edit → Copy)
-   - From a file: Open in text editor → Select all → Copy
+### Panel Groups
 
-2. In Blender's 3D Viewport, open the **Sidebar** (press `N` if hidden)
+- `Grease Pencil`
+  - `Paste as Grease Pencil`
+  - `Split into GP Layers`
+  - `Split layers into objects`
+- `Curves & Text`
+  - `Paste as Curves`
+- `Images`
+  - `Paste Image (Clipboard)`
+  - `Mesh Plane` / `Reference`
+- `Paste at:`
+  - `World Origin` / `Cursor`
 
-3. Navigate to the **ToothPaste** tab
+## SVG Support Summary
 
-4. Click **Paste as Grease Pencil** (or **Paste as Curves**)
+### Supported
 
-5. Your SVG will be imported as a Grease Pencil object at the 3D cursor location
+- Geometry: `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`
+- Group hierarchy via top-level `<g>`
+- CSS class-based styles in `<style>` blocks (common in Illustrator exports)
+- Fill/stroke color mapping to GP materials
+- Stroke width mapping (best effort)
+- Mask/clip reconstruction to GP layer masks/holdout in common workflows
+- Text extraction to Blender font objects
+- SVG image extraction to Blender objects
 
-### Splitting Layers into Objects
+### Limited / Partial
 
-If your imported Grease Pencil object has multiple layers, you can split them:
+- Gradients: partial mapping only (see section above)
+- Text layout fidelity (`tspan`, advanced typographic layout)
+- Complex nested masking/clipping edge cases
+- Very complex paths and arcs may differ slightly
 
-1. Select the Grease Pencil object
+### Not Fully Supported
 
-2. In the **ToothPaste** sidebar panel, click **Split layers into objects**
-
-3. Each layer will become a separate object (original is hidden, not deleted)
-
-### Keyboard Shortcuts
-
-You can assign custom shortcuts via Edit > Preferences > Keymap:
-- Search for `toothpaste.paste_svg`
-- Search for `gpencil.split_layers_into_objects`
-
-## Supported SVG Features
-
-### ✅ Fully Supported
-- Basic shapes: `<rect>`, `<circle>`, `<ellipse>`, `<line>`, `<polygon>`, `<polyline>`
-- Path data: `<path>` elements with standard SVG path commands
-- Layer groups: `<g>` elements (become GP layers)
-- Layer naming: `id` and `inkscape:label` attributes
-
-### ⚠️ Limitations
-- **No transform support** (rotation, scale, translation must be baked)
-- **No gradients or patterns** (solid colors only)
-- **Mask/clip behavior depends on GP layer-mask API in your Blender build**
-- **Embedded/linked image support is best-effort**
-
-👉 **See [LIMITATIONS.md](LIMITATIONS.md) for full details and workarounds**
-
-## Workflow Tips
-
-### Preparing SVGs for Import
-
-For best results, prepare your SVG before copying:
-
-**In Inkscape:**
-- Convert text to paths: `Path → Object to Path`
-- Flatten transforms: `Path → Object to Path` (select all)
-- Organize in groups: Use layers panel
-
-**In Adobe Illustrator:**
-- Convert text: `Type → Create Outlines`
-- Expand appearances: `Object → Expand Appearance`
-- Use groups for layers: `Object → Group`
-
-**In Affinity Designer:**
-- Convert to curves: `Layer → Convert to Curves`
-- Expand strokes: `Layer → Expand Stroke`
-- Use groups for organization
-
-### Common Use Cases
-
-**Motion Graphics:**
-1. Design logo/graphics in vector editor
-2. Copy SVG to clipboard
-3. Paste into Blender as Grease Pencil
-4. Animate with GP modifiers and keyframes
-
-**2D Animation:**
-1. Import character parts as separate layers
-2. Split layers into objects
-3. Rig with armatures
-4. Animate
-
-**Mixed 2D/3D:**
-1. Import vector elements
-2. Combine with 3D scenes
-3. Use GP materials for stylization
+- Full SVG rendering parity with browser engines
+- All filter/pattern/blend-mode effects
+- Full transform semantics across every editor/export variant
 
 ## Troubleshooting
 
-### "No valid SVG layers found"
-- Ensure your SVG contains `<g>` group elements
-- Try grouping your artwork in the SVG editor
-- Check that groups contain actual geometry
+- `No valid SVG layers, text, or image content found`
+  - Ensure SVG has visible geometry/text/image data
+  - Try grouping artwork into top-level groups
+- `Clipboard does not contain valid SVG`
+  - Copy raw SVG text or copy as SVG from your editor
+- `Failed to create image object`
+  - Switch image mode (`Mesh Plane`/`Reference`) and retry
+  - Check clipboard/image data validity
+- Masking mismatch
+  - Share the source SVG export and expected Blender mask setup
 
-### "Invalid XML format" / "Clipboard does not contain valid SVG"
-- Make sure you copied the SVG code (not just selected artwork)
-- In some editors, use "Copy SVG Code" instead of regular copy
-- Try exporting as SVG file, then open in text editor and copy
+## Notes for Packaging
 
-### Imported object is empty
-- Convert all objects to paths in your SVG editor
-- Check that objects aren't hidden or masked
-- Verify paths have fills or strokes (not just transforms)
-
-### Layer names are generic ("Layer_1", etc.)
-- Add `id` attributes to your `<g>` elements
-- In Inkscape: Use Object Properties panel
-- In Illustrator/Affinity: Name layers in the Layers panel
-
-### Shapes look wrong or distorted
-- Flatten transforms before exporting (`Object → Expand` / `Path → Object to Path`)
-- Check that viewBox and dimensions are standard values
-- Try simplifying complex path data
-
-## Development
-
-### Running Tests
-
-Tests require pytest installed in Blender's Python environment.
-
-```bash
-# Install pytest in Blender's Python
-/path/to/blender/python -m pip install pytest
-
-# Run all tests
-blender --background --python tests/run_tests.py -- -v
-
-# Run specific test file
-blender --background --python tests/run_tests.py -- tests/test_svg_validation.py -v
-```
-
-See [tests/README.md](tests/README.md) for more details.
-
-### Project Structure
-
-```
-toothpaste-for-blender/
-├── __init__.py           # Main addon code
-├── exceptions.py         # Custom exception classes
-├── blender_manifest.toml # Extension manifest
-├── README.md            # This file
-├── LIMITATIONS.md       # Detailed feature support documentation
-├── tests/               # Test suite
-│   ├── conftest.py      # Pytest fixtures
-│   ├── run_tests.py     # Test runner
-│   └── test_*.py        # Test modules
-└── icon.jpg             # Addon icon
-```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. **Report bugs** with example SVG files
-2. **Request features** with use cases
-3. **Submit pull requests** with tests
-
-## License
-
-GNU General Public License v3.0 or later (GPL-3.0-or-later)
-
-See Blender's extension licensing requirements: https://docs.blender.org/manual/en/dev/advanced/extensions/licenses.html
-
-## Credits
-
-**Author:** Todor Hlebarov (Cosmonavt)
-**Website:** https://gitlab.com/todor.motion/toothpaste-for-blender
-**Version:** 1.1.0
-**Blender Versions:** 4.3.0+
+`blender_manifest.toml` excludes non-essential packaging paths (including `images/`) for cleaner builds.
 
 ## Changelog
 
-### v1.1.0 (2026)
-- Added Paste as Curves operator
-- Added split-on-paste toggle for layer-aware imports
-- Replaced bpy.ops layer duplication with low-level object/data API copy flow
-- Added SVG text and image import support
-- Added GP mask and clip-path reconstruction using mask layers and holdout
-- Updated extension manifest and package exclusions
+### v1.1.0 (current line)
 
-### v1.0.0 (2025)
-- Complete refactor with TDD methodology
-- Improved error handling with specific exception types
-- Fixed Grease Pencil v3 compatibility issues
-- Added proper resource cleanup (temp file handling)
-- Removed unused code (masks, clips parsing)
-- Comprehensive docstrings and documentation
-- Full test suite with pytest
-- Created LIMITATIONS.md with detailed feature documentation
+- Added `Paste as Curves`
+- Added `Split into GP Layers`
+- Added `Split layers into objects` with low-level API copy flow
+- Added clipboard image paste and SVG image import modes (`Mesh Plane` / `Reference`)
+- Added SVG text import to Blender font objects
+- Added GP mask/clip reconstruction improvements
+- Added cross-editor style handling improvements (Affinity/Figma/Illustrator/Inkscape)
+- Added partial SVG gradient-to-GP material mapping
+- Added stroke/fill material naming cleanup (`Fill`/`Stroke`)
 
-### v0.9.2 (Previous)
-- Initial Blender 4.4 compatibility
-- Basic SVG import functionality
-- Layer splitting feature
+## License
 
-## Support
-
-- **Documentation:** See LIMITATIONS.md for feature details
-- **Community:** Blender Artists forum
-
----
-
-Made with ❤️ for the Blender community
+GPL-3.0-or-later
