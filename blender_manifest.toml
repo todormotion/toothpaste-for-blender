@@ -2,9 +2,9 @@ schema_version = "1.0.0"
 
 # Manifest file for a Blender extension
 id = "toothpaste"
-version = "1.0.0"
+version = "1.1.0"
 name = "ToothPaste for Blender"
-tagline = "Paste SVG from Clipboard as Grease Pencil"
+tagline = "Paste SVG from Clipboard as Grease Pencil or Curves"
 maintainer = "Todor Hlebarov <todor@cosmonavt.studio>"
 # Supported types: "add-on", "theme"
 type = "add-on"
@@ -16,7 +16,7 @@ website = "https://gitlab.com/todor.motion/toothpaste-for-blender"
 # # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = ["Grease Pencil", "Import-Export"]
 
-blender_version_min = "4.2.0"
+blender_version_min = "4.3.0"
 # # Optional: Blender version that the extension does not support, earlier versions are supported.
 # # This can be omitted and defined later on the extensions platform if an issue is found.
 # blender_version_max = "5.1.0"
@@ -27,7 +27,7 @@ license = [
   "SPDX:GPL-3.0-or-later",
 ]
 # # Optional: required by some licenses.
- copyright = [
+copyright = [
    "2019-2025 Cosmonavt Ltd.",
    "2019 Cosmonavt Ltd.",
  ]
@@ -53,14 +53,16 @@ license = [
 #
 [permissions]
 clipboard = "Paste SVG data from Clipboard"
+files = "Import SVG assets and temporary files for text and image support"
 
-# # Optional: advanced build settings.
-# # https://docs.blender.org/manual/en/dev/advanced/extensions/command_line_arguments.html#command-line-args-extension-build
-# [build]
-# # These are the default build excluded patterns.
-# # You only need to edit them if you want different options.
-# paths_exclude_pattern = [
-#   "__pycache__/",
-#   "/.git/",
-#   "/*.zip",
-# ]
+# Optional: advanced build settings.
+# https://docs.blender.org/manual/en/dev/advanced/extensions/command_line_arguments.html#command-line-args-extension-build
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+  "images/",
+  "*.psd",
+  "*.kra",
+]

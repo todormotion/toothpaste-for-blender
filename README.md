@@ -1,21 +1,25 @@
-# ToothPaste for Blender v1.0.0
+# ToothPaste for Blender v1.1.0
 
-**Paste SVG from clipboard directly into Blender as Grease Pencil objects**
+**Paste SVG from clipboard directly into Blender as Grease Pencil or Curve objects**
 
 ToothPaste is a Blender addon that allows you to quickly import SVG graphics from your clipboard into Blender's Grease Pencil system. Perfect for motion graphics, 2D animation, and integrating vector artwork into your 3D projects.
 
 ## Features
 
 ✅ **Paste SVG directly from clipboard** - No need to save files
-✅ **Grease Pencil v3 support** - Works with Blender 4.2+
+✅ **Grease Pencil v3 support** - Works with Blender 4.3+
+✅ **Curve import mode** - Paste SVG as curve objects
 ✅ **Shape conversion** - Rectangles, circles, ellipses, lines, polygons, and polylines automatically converted to paths
 ✅ **Layer preservation** - SVG groups (`<g>`) imported as separate Grease Pencil layers
+✅ **Mask + clip reconstruction** - Uses GP masks and holdout layers where supported
+✅ **Text support** - SVG `<text>` imported as Blender font objects
+✅ **Image support** - SVG `<image>` imported as Blender image empties
 ✅ **Layer splitting** - Split Grease Pencil layers into individual objects with one click
 ✅ **Multi-editor support** - Works with SVGs from Adobe Illustrator, Affinity Designer, Inkscape, and more
 
 ## Requirements
 
-- **Blender 4.2.0 or later** (Grease Pencil v3 required)
+- **Blender 4.3.0 or later** (Grease Pencil v3 required)
 - Supported operating systems: Windows, macOS, Linux
 
 ## Installation
@@ -51,7 +55,7 @@ ToothPaste is a Blender addon that allows you to quickly import SVG graphics fro
 
 3. Navigate to the **ToothPaste** tab
 
-4. Click **Paste SVG (Single Object)**
+4. Click **Paste as Grease Pencil** (or **Paste as Curves**)
 
 5. Your SVG will be imported as a Grease Pencil object at the 3D cursor location
 
@@ -81,10 +85,9 @@ You can assign custom shortcuts via Edit > Preferences > Keymap:
 
 ### ⚠️ Limitations
 - **No transform support** (rotation, scale, translation must be baked)
-- **No text elements** (convert to paths first)
 - **No gradients or patterns** (solid colors only)
-- **No masks or clipping paths**
-- **No embedded images**
+- **Mask/clip behavior depends on GP layer-mask API in your Blender build**
+- **Embedded/linked image support is best-effort**
 
 👉 **See [LIMITATIONS.md](LIMITATIONS.md) for full details and workarounds**
 
@@ -208,10 +211,18 @@ See Blender's extension licensing requirements: https://docs.blender.org/manual/
 
 **Author:** Todor Hlebarov (Cosmonavt)
 **Website:** https://gitlab.com/todor.motion/toothpaste-for-blender
-**Version:** 1.0.0
-**Blender Versions:** 4.2.0+
+**Version:** 1.1.0
+**Blender Versions:** 4.3.0+
 
 ## Changelog
+
+### v1.1.0 (2026)
+- Added Paste as Curves operator
+- Added split-on-paste toggle for layer-aware imports
+- Replaced bpy.ops layer duplication with low-level object/data API copy flow
+- Added SVG text and image import support
+- Added GP mask and clip-path reconstruction using mask layers and holdout
+- Updated extension manifest and package exclusions
 
 ### v1.0.0 (2025)
 - Complete refactor with TDD methodology

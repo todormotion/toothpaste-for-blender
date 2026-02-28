@@ -24,7 +24,7 @@ ToothPaste for Blender provides basic SVG import functionality. However, due to 
 - Inkscape
 - Any editor producing standard SVG
 
-## ❌ Not Supported
+## ⚠️ Partially Supported / Not Supported
 
 ### Transforms
 The addon **does not apply SVG transforms**. This includes:
@@ -56,28 +56,20 @@ The addon **does not apply SVG transforms**. This includes:
 - **Nested paths** - Only top-level paths in groups are imported
 
 ### Text
-- `<text>` elements are **not supported**
-- `<tspan>` elements are **not supported**
-
-**Workaround:** Convert text to paths before exporting:
-- **Inkscape:** Path → Object to Path
-- **Illustrator:** Type → Create Outlines
-- **Affinity Designer:** Layer → Convert to Curves
+- `<text>` elements are imported as Blender FONT objects
+- Nested `<tspan>` style/layout fidelity is limited
+- Advanced text layout (textPath, letter spacing, baseline shifts) is not fully supported
 
 ### Masks & Clipping
-- `<mask>` elements are **not imported**
-- `<clipPath>` elements are **not imported**
-- `<defs>` definitions are parsed but not applied
-
-**Workaround:** Flatten masks/clips in your editor:
-- **Inkscape:** Object → Clip → Release, then manually cut paths
-- **Illustrator:** Object → Expand
-- **Affinity Designer:** Use destructive boolean operations
+- `<mask>` and `<clipPath>` definitions are converted to GP helper layers when possible
+- GP layer masks are assigned to target layers where API support exists
+- Holdout behavior for clip paths depends on Blender's current GP layer API
+- Complex nested masks/clips may still require flattening in the SVG editor
 
 ### Images & External Resources
-- `<image>` elements (embedded or linked) are **not supported**
-- `xlink:href` references are **not supported**
-- External CSS stylesheets are **not supported**
+- `<image>` elements are supported for embedded base64 data and valid local file paths
+- Relative asset paths and remote URLs are not resolved
+- External CSS stylesheets are not supported
 
 ### Symbols & Use
 - `<symbol>` definitions are **not imported**
@@ -95,7 +87,7 @@ The addon **does not apply SVG transforms**. This includes:
 - Floating-point rounding may cause minor differences in curves
 - Very small or very large coordinates may not import correctly
 
-### Blender Grease Pencil v3 (4.2+)
+### Blender Grease Pencil v3 (4.3+)
 - GP v3 API is relatively new and may have differences across Blender versions
 - Layer naming API may vary - fallback behavior is implemented
 
