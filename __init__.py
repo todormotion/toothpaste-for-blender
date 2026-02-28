@@ -106,6 +106,64 @@ def _parse_style(style_text: Optional[str]) -> Dict[str, str]:
     return style
 
 
+def _style_to_string(style: Dict[str, str]) -> str:
+    """Serialize style dictionary to SVG style declaration string."""
+    return ";".join(f"{key}:{value}" for key, value in style.items())
+
+
+def _collect_css_class_styles(root: ET.Element) -> Dict[str, Dict[str, str]]:
+    """Parse <style> blocks and collect simple class selectors (.class)."""
+    class_styles: Dict[str, Dict[str, str]] = {}
+    for node in root.iter():
+        if not isinstance(node.tag, str) or _local_name(node.tag) != "style":
+            continue
+        css_text = "".join(node.itertext())
+        if not css_text:
+            continue
+        css_text = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+        for selector_group, declarations in re.findall(r"([^{}]+)\{([^}]*)\}", css_text):
+            props = _parse_style(declarations)
+            if not props:
+                continue
+            selectors = [selector.strip() for selector in selector_group.split(",")]
+            for selector in selectors:
+                if not selector.startswith("."):
+                    continue
+                class_name = selector[1:].strip()
+                if not class_name:
+                    continue
+                target = class_styles.setdefault(class_name, {})
+                target.update(props)
+    return class_styles
+
+
+def _inline_css_class_styles(root: ET.Element) -> None:
+    """Inline class-based CSS styles into style attributes for parser compatibility."""
+    class_styles = _collect_css_class_styles(root)
+    if not class_styles:
+        return
+
+    for node in root.iter():
+        if not isinstance(node.tag, str):
+            continue
+        class_attr = node.get("class")
+        if not class_attr:
+            continue
+
+        merged_style: Dict[str, str] = {}
+        for class_name in class_attr.replace(",", " ").split():
+            class_props = class_styles.get(class_name.strip())
+            if class_props:
+                merged_style.update(class_props)
+
+        if not merged_style:
+            continue
+
+        inline_style = _parse_style(node.get("style"))
+        merged_style.update(inline_style)
+        node.set("style", _style_to_string(merged_style))
+
+
 def _clamp01(value: float) -> float:
     """Clamp number to [0, 1]."""
     return max(0.0, min(1.0, value))
@@ -483,9 +541,11 @@ def parse_svg_root(svg_data: str) -> ET.Element:
     """Parse SVG string to XML root."""
     validate_svg_string(svg_data)
     try:
-        return ET.fromstring(svg_data)
+        root = ET.fromstring(svg_data)
     except ET.ParseError as exc:
         raise InvalidSVGError(f"Invalid XML format: {exc}") from exc
+    _inline_css_class_styles(root)
+    return root
 
 
 def get_clipboard_svg() -> str:
@@ -807,9 +867,198 @@ def _geometry_to_import_element(element: ET.Element) -> Optional[ET.Element]:
     return path_element
 
 
+def _path_bounds(path_data: Optional[str]) -> Optional[Tuple[float, float, float, float]]:
+    """Approximate path bounds by walking SVG path commands."""
+    if not path_data:
+        return None
+    tokens = re.findall(r"[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", path_data)
+    if not tokens:
+        return None
+
+    index = 0
+    command = ""
+    x = 0.0
+    y = 0.0
+    start_x = 0.0
+    start_y = 0.0
+    points: List[Tuple[float, float]] = []
+
+    def has_number(pos: int) -> bool:
+        return pos < len(tokens) and re.match(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?$", tokens[pos]) is not None
+
+    def take_number() -> Optional[float]:
+        nonlocal index
+        if not has_number(index):
+            return None
+        value = float(tokens[index])
+        index += 1
+        return value
+
+    while index < len(tokens):
+        token = tokens[index]
+        if re.match(r"[A-Za-z]$", token):
+            command = token
+            index += 1
+        if not command:
+            break
+
+        cmd = command
+        rel = cmd.islower()
+        upper = cmd.upper()
+
+        if upper == "Z":
+            x, y = start_x, start_y
+            points.append((x, y))
+            continue
+
+        if upper == "M":
+            first = True
+            while True:
+                nx = take_number()
+                ny = take_number()
+                if nx is None or ny is None:
+                    break
+                if rel:
+                    x += nx
+                    y += ny
+                else:
+                    x, y = nx, ny
+                points.append((x, y))
+                if first:
+                    start_x, start_y = x, y
+                    first = False
+            continue
+
+        if upper == "L":
+            while True:
+                nx = take_number()
+                ny = take_number()
+                if nx is None or ny is None:
+                    break
+                if rel:
+                    x += nx
+                    y += ny
+                else:
+                    x, y = nx, ny
+                points.append((x, y))
+            continue
+
+        if upper == "H":
+            while True:
+                nx = take_number()
+                if nx is None:
+                    break
+                x = x + nx if rel else nx
+                points.append((x, y))
+            continue
+
+        if upper == "V":
+            while True:
+                ny = take_number()
+                if ny is None:
+                    break
+                y = y + ny if rel else ny
+                points.append((x, y))
+            continue
+
+        if upper == "C":
+            while True:
+                vals: List[float] = []
+                for _ in range(6):
+                    number = take_number()
+                    if number is None:
+                        vals = []
+                        break
+                    vals.append(number)
+                if not vals:
+                    break
+                x1, y1, x2, y2, ex, ey = vals
+                if rel:
+                    points.append((x + x1, y + y1))
+                    points.append((x + x2, y + y2))
+                    x += ex
+                    y += ey
+                else:
+                    points.append((x1, y1))
+                    points.append((x2, y2))
+                    x, y = ex, ey
+                points.append((x, y))
+            continue
+
+        if upper in {"S", "Q"}:
+            while True:
+                vals: List[float] = []
+                for _ in range(4):
+                    number = take_number()
+                    if number is None:
+                        vals = []
+                        break
+                    vals.append(number)
+                if not vals:
+                    break
+                c1x, c1y, ex, ey = vals
+                if rel:
+                    points.append((x + c1x, y + c1y))
+                    x += ex
+                    y += ey
+                else:
+                    points.append((c1x, c1y))
+                    x, y = ex, ey
+                points.append((x, y))
+            continue
+
+        if upper == "T":
+            while True:
+                nx = take_number()
+                ny = take_number()
+                if nx is None or ny is None:
+                    break
+                if rel:
+                    x += nx
+                    y += ny
+                else:
+                    x, y = nx, ny
+                points.append((x, y))
+            continue
+
+        if upper == "A":
+            while True:
+                vals: List[float] = []
+                for _ in range(7):
+                    number = take_number()
+                    if number is None:
+                        vals = []
+                        break
+                    vals.append(number)
+                if not vals:
+                    break
+                rx, ry, _rot, _laf, _sf, ex, ey = vals
+                if rel:
+                    x += ex
+                    y += ey
+                else:
+                    x, y = ex, ey
+                # Include endpoint and radii extents as approximation.
+                points.append((x, y))
+                points.append((x + abs(rx), y + abs(ry)))
+                points.append((x - abs(rx), y - abs(ry)))
+            continue
+
+        # Unsupported command token: break to avoid infinite loop.
+        break
+
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def _geometry_bounds(element: ET.Element) -> Optional[Tuple[float, float, float, float]]:
     """Get local-space bounding box for supported geometry."""
     tag = _local_name(element.tag)
+    if tag == "path":
+        return _path_bounds(element.get("d"))
     if tag == "rect":
         x = _parse_svg_number(element.get("x"), 0.0)
         y = _parse_svg_number(element.get("y"), 0.0)
@@ -867,6 +1116,69 @@ def _transform_bounds(
     xs = [c[0] for c in corners]
     ys = [c[1] for c in corners]
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _union_bounds(
+    left: Optional[Tuple[float, float, float, float]],
+    right: Optional[Tuple[float, float, float, float]],
+) -> Optional[Tuple[float, float, float, float]]:
+    """Return union of two bounds tuples."""
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return (
+        min(left[0], right[0]),
+        min(left[1], right[1]),
+        max(left[2], right[2]),
+        max(left[3], right[3]),
+    )
+
+
+def _definition_geometry_bounds(
+    root: ET.Element,
+    base_transform: Tuple[float, float, float, float, float, float] = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+) -> Optional[Tuple[float, float, float, float]]:
+    """Compute world-space bounds for geometry inside a definition subtree."""
+    aggregate: Optional[Tuple[float, float, float, float]] = None
+
+    def walk(
+        node: ET.Element,
+        inherited_transform: Tuple[float, float, float, float, float, float],
+    ) -> None:
+        nonlocal aggregate
+        local = _parse_transform_attr(node.get("transform"))
+        active = _matrix_multiply(inherited_transform, local)
+        tag = _local_name(node.tag)
+        if tag in SUPPORTED_GEOMETRY:
+            local_bounds = _geometry_bounds(node)
+            if local_bounds is not None:
+                aggregate = _union_bounds(aggregate, _transform_bounds(local_bounds, active))
+        for child in list(node):
+            if isinstance(child.tag, str):
+                walk(child, active)
+
+    walk(root, base_transform)
+    return aggregate
+
+
+def _bounds_match_score(
+    left: Optional[Tuple[float, float, float, float]],
+    right: Optional[Tuple[float, float, float, float]],
+) -> float:
+    """Score bounds overlap/containment similarity in [0, 1]."""
+    if left is None or right is None:
+        return 0.0
+    lx0, ly0, lx1, ly1 = left
+    rx0, ry0, rx1, ry1 = right
+    iw = max(0.0, min(lx1, rx1) - max(lx0, rx0))
+    ih = max(0.0, min(ly1, ry1) - max(ly0, ry0))
+    intersection = iw * ih
+    if intersection <= 0.0:
+        return 0.0
+    left_area = max((lx1 - lx0) * (ly1 - ly0), 1e-9)
+    right_area = max((rx1 - rx0) * (ry1 - ry0), 1e-9)
+    return intersection / min(left_area, right_area)
 
 
 def _collect_geometry_signatures(
@@ -983,6 +1295,7 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
     visible_names: List[str] = []
     mask_bindings: Dict[str, List[str]] = {}
     clip_bindings: Dict[str, List[str]] = {}
+    mask_layer_bindings: Dict[str, List[str]] = {}
     clip_layer_bindings: Dict[str, List[str]] = {}
     layer_fill_specs: Dict[str, Dict[str, object]] = {}
     layer_stroke_specs: Dict[str, Dict[str, object]] = {}
@@ -1045,40 +1358,66 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
             layer_bounds["Layer_1"] = None
             layer_transforms["Layer_1"] = _matrix_identity()
 
-    if split_layers and signature_to_layers:
-        for target_layer_name, clip_refs in list(clip_bindings.items()):
+    def resolve_ref_bindings(
+        refs_by_layer: Dict[str, List[str]],
+        defs_by_id: Dict[str, ET.Element],
+    ) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+        """Resolve refs to visible layers when definitions match imported geometry."""
+        resolved_layer_bindings: Dict[str, List[str]] = {}
+        for target_layer_name, refs in list(refs_by_layer.items()):
             unresolved_refs: List[str] = []
             target_transform = layer_transforms.get(target_layer_name, _matrix_identity())
-            for clip_ref in clip_refs:
-                matched_layers: List[str] = []
-                clip_def = clip_defs.get(clip_ref)
-                if clip_def is None:
-                    unresolved_refs.append(clip_ref)
+            for definition_ref in refs:
+                definition_node = defs_by_id.get(definition_ref)
+                if definition_node is None:
+                    unresolved_refs.append(definition_ref)
                     continue
-                clip_signatures = _collect_geometry_signatures(clip_def, target_transform)
-                for signature in clip_signatures:
+
+                matched_layers: List[str] = []
+                signatures = _collect_geometry_signatures(definition_node, target_transform)
+                for signature in signatures:
                     matched_layers.extend(signature_to_layers.get(signature, []))
                 if not matched_layers:
-                    raw_signatures = _collect_geometry_signatures(clip_def, include_transform=False)
+                    raw_signatures = _collect_geometry_signatures(definition_node, include_transform=False)
                     for signature in raw_signatures:
                         matched_layers.extend(signature_to_layers_raw.get(signature, []))
-                matched_layers = [
-                    name for name in dict.fromkeys(matched_layers)
-                    if name != target_layer_name
-                ]
-                if matched_layers:
-                    existing = clip_layer_bindings.setdefault(target_layer_name, [])
-                    for matched_layer in matched_layers:
+
+                matched_all = list(dict.fromkeys(matched_layers))
+                matched_non_self = [name for name in matched_all if name != target_layer_name]
+                if not matched_all:
+                    # Fallback for editor exports with tiny geometric deltas
+                    # (e.g. viewport clip rect dimensions rounded differently).
+                    definition_bounds = _definition_geometry_bounds(definition_node, target_transform)
+                    scored_matches: List[Tuple[float, str]] = []
+                    for candidate_name, candidate_bounds in layer_bounds.items():
+                        score = _bounds_match_score(definition_bounds, candidate_bounds)
+                        if score > 0.98:
+                            scored_matches.append((score, candidate_name))
+                    scored_matches.sort(reverse=True)
+                    matched_all = [name for _, name in scored_matches]
+                    matched_non_self = [name for name in matched_all if name != target_layer_name]
+
+                if matched_non_self:
+                    existing = resolved_layer_bindings.setdefault(target_layer_name, [])
+                    for matched_layer in matched_non_self:
                         if matched_layer not in existing:
                             existing.append(matched_layer)
-                else:
-                    unresolved_refs.append(clip_ref)
-            clip_bindings[target_layer_name] = unresolved_refs
+                elif not matched_all:
+                    unresolved_refs.append(definition_ref)
+                # self-only matches count as resolved and don't require helper layers.
+
+            refs_by_layer[target_layer_name] = unresolved_refs
+        return refs_by_layer, resolved_layer_bindings
+
+    if split_layers and signature_to_layers:
+        clip_bindings, clip_layer_bindings = resolve_ref_bindings(clip_bindings, clip_defs)
+        mask_bindings, mask_layer_bindings = resolve_ref_bindings(mask_bindings, mask_defs)
 
     if not split_layers:
         # Single-layer GP import should not emit extra hidden helper layers.
         mask_bindings = {name: [] for name in visible_names}
         clip_bindings = {name: [] for name in visible_names}
+        mask_layer_bindings = {}
         clip_layer_bindings = {}
 
     referenced_mask_ids = {ref for refs in mask_bindings.values() for ref in refs}
@@ -1108,6 +1447,7 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
         "clip_names": clip_names,
         "mask_bindings": mask_bindings,
         "clip_bindings": clip_bindings,
+        "mask_layer_bindings": mask_layer_bindings,
         "clip_layer_bindings": clip_layer_bindings,
         "layer_fill_specs": layer_fill_specs,
         "layer_stroke_specs": layer_stroke_specs,
@@ -1424,6 +1764,7 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
 
     mask_bindings = plan["mask_bindings"]
     clip_bindings = plan["clip_bindings"]
+    mask_layer_bindings = plan.get("mask_layer_bindings", {})
     clip_layer_bindings = plan.get("clip_layer_bindings", {})
 
     for target_name, refs in mask_bindings.items():
@@ -1433,6 +1774,15 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
         for definition_id in refs:
             mask_layer_name = f"{MASK_LAYER_PREFIX}{definition_id}"
             mask_layer = _find_gp_layer(gp_obj, mask_layer_name)
+            if mask_layer:
+                _add_gp_layer_mask(gp_obj, target_layer, mask_layer)
+
+    for target_name, layer_names in mask_layer_bindings.items():
+        target_layer = _find_gp_layer(gp_obj, target_name)
+        if not target_layer:
+            continue
+        for layer_name in layer_names:
+            mask_layer = _find_gp_layer(gp_obj, layer_name)
             if mask_layer:
                 _add_gp_layer_mask(gp_obj, target_layer, mask_layer)
 
