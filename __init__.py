@@ -2248,16 +2248,16 @@ def _assign_material_to_layer_content(
                         stroke.material_index = material_index
                     except Exception:
                         pass
-                # Imported SVG often carries per-stroke fill tint attributes;
-                # clear them so material gradient/fill controls the result.
+                # Keep imported tint attributes neutral so GP materials stay visible
+                # while still driving the final appearance.
                 if hasattr(stroke, "fill_color"):
                     try:
-                        stroke.fill_color = (0.0, 0.0, 0.0, 0.0)
+                        stroke.fill_color = (1.0, 1.0, 1.0, 1.0)
                     except Exception:
                         pass
                 if hasattr(stroke, "fill_opacity"):
                     try:
-                        stroke.fill_opacity = 0.0
+                        stroke.fill_opacity = 1.0
                     except Exception:
                         pass
                 points = getattr(stroke, "points", None)
@@ -2265,7 +2265,7 @@ def _assign_material_to_layer_content(
                     for point in points:
                         if hasattr(point, "vertex_color"):
                             try:
-                                point.vertex_color = (0.0, 0.0, 0.0, 0.0)
+                                point.vertex_color = (1.0, 1.0, 1.0, 1.0)
                             except Exception:
                                 pass
 
@@ -2283,11 +2283,11 @@ def _assign_material_to_layer_content(
                         except Exception:
                             pass
             # Some import paths write explicit stroke/point color attributes.
-            # Reset alpha/mix to zero so material colors are authoritative.
+            # Set them to neutral values instead of zero so materials remain visible.
             for attr_name, setter in (
-                ("fill_opacity", lambda item: setattr(item, "value", 0.0)),
-                ("fill_color", lambda item: setattr(item, "color", (0.0, 0.0, 0.0, 0.0))),
-                ("vertex_color", lambda item: setattr(item, "color", (0.0, 0.0, 0.0, 0.0))),
+                ("fill_opacity", lambda item: setattr(item, "value", 1.0)),
+                ("fill_color", lambda item: setattr(item, "color", (1.0, 1.0, 1.0, 1.0))),
+                ("vertex_color", lambda item: setattr(item, "color", (1.0, 1.0, 1.0, 1.0))),
             ):
                 try:
                     attr = attributes.get(attr_name)
@@ -2373,6 +2373,8 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
     if not layer_names:
         return
 
+    claimed_existing_indices: Set[int] = set()
+
     for layer_name in layer_names:
         fill_spec = layer_fill_specs.get(layer_name) or {"kind": "NONE"}
         stroke_spec = layer_stroke_specs.get(layer_name) or {"kind": "NONE"}
@@ -2389,14 +2391,21 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
 
         slots = getattr(gp_obj.data, "materials", None)
         used_indices = _layer_used_material_indices(layer)
-        applied_existing = False
         if slots and used_indices:
+            reusable_indices: List[int] = []
             for index in used_indices:
                 if index < 0 or index >= len(slots):
                     continue
                 material = slots[index]
                 if material is None:
                     continue
+                if index in claimed_existing_indices:
+                    continue
+                reusable_indices.append(index)
+
+            if reusable_indices:
+                primary_index = reusable_indices[0]
+                material = slots[primary_index]
                 _apply_style_to_gp_material(
                     material,
                     fill_spec,
@@ -2412,16 +2421,8 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
                         material.name = "Stroke"
                 except Exception:
                     pass
-                applied_existing = True
-
-            if applied_existing:
-                primary_index = used_indices[0]
-                for attr in ("material_index", "active_material_index"):
-                    if hasattr(layer, attr):
-                        try:
-                            setattr(layer, attr, primary_index)
-                        except Exception:
-                            pass
+                claimed_existing_indices.add(primary_index)
+                _assign_material_to_layer_content(gp_obj, layer, material, primary_index)
                 continue
 
         material = bpy.data.materials.new(base_material_name)
@@ -2435,6 +2436,7 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
         )
         material_index = _ensure_material_slot(gp_obj, material)
         if material_index >= 0:
+            claimed_existing_indices.add(material_index)
             _assign_material_to_layer_content(gp_obj, layer, material, material_index)
 
 
