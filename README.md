@@ -1,4 +1,4 @@
-# ToothPaste for Blender v1.1.0
+# ToothPaste for Blender v1.1.4
 
 Paste SVG content from clipboard into Blender as Grease Pencil, Curves, Text, and Images.
 
@@ -12,6 +12,9 @@ ToothPaste is focused on Blender 4.3+ (Grease Pencil v3) and supports practical 
 
 ## Features
 
+- Blender 5.1 support
+- Materials now transfer from SVG to Grease Pencil correctly and stay editable after import
+- Multilevel masks are now supported
 - Paste SVG from clipboard as Grease Pencil (`Paste as Grease Pencil`)
 - Paste SVG from clipboard as Curves (`Paste as Curves`)
 - Split imported SVG into GP layers (`Split into GP Layers`)
@@ -23,6 +26,8 @@ ToothPaste is focused on Blender 4.3+ (Grease Pencil v3) and supports practical 
 - Paste image as `Mesh Plane` or `Reference`
 - Paste location controls for all modes (`World Origin` or `Cursor`)
 - GP material mapping for fill + stroke color
+- Shared SVG styles reuse the same GP material
+- Imported GP objects stay material-driven so later material edits remain visible in the viewport
 - Partial gradient mapping from SVG gradients to GP Fill Gradient
 
 ## Gradient Support (Partial)
@@ -39,7 +44,7 @@ Important:
 
 ## Requirements
 
-- Blender 4.3.0+
+- Blender 4.3.0+ including Blender 5.1
 - Windows, macOS, or Linux
 
 ## Installation
@@ -82,10 +87,13 @@ Important:
 - Group hierarchy via top-level `<g>`
 - CSS class-based styles in `<style>` blocks (common in Illustrator exports)
 - Fill/stroke color mapping to GP materials
+- Material edits after import remain live on the GP object
 - Stroke width mapping (best effort)
 - Mask/clip reconstruction to GP layer masks/holdout in common workflows
+- Nested mask/clip relationships use the nearest parent mask layer for each imported GP layer
 - Text extraction to Blender font objects
 - SVG image extraction to Blender objects
+- Images embedded only inside `defs`/`mask`/`clipPath` containers are ignored and not pasted as scene objects
 
 ### Limited / Partial
 
@@ -119,7 +127,13 @@ Important:
 
 ## Changelog
 
-### v1.1.0 (current line)
+### v1.1.4 (current line)
+
+- Blender 5.1 support
+- Materials now transfer from SVG to Grease Pencil correctly and stay editable after import
+- Multilevel masks are now supported
+
+### v1.1.0
 
 - Added `Paste as Curves`
 - Added `Split into GP Layers`

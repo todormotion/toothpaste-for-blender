@@ -13,7 +13,7 @@ V1.1 highlights:
 bl_info = {
     "name": "ToothPaste for Blender",
     "author": "Cosmonavt",
-    "version": (1, 1, 0),
+    "version": (1, 1, 4),
     "blender": (4, 3, 0),
     "category": "Import-Export",
     "location": "View3D > Sidebar > ToothPaste",
@@ -187,6 +187,26 @@ def _parse_opacity(value: Optional[str], default: float = 1.0) -> float:
         return default
 
 
+def _srgb_channel_to_linear(channel: float) -> float:
+    """Convert sRGB channel in [0, 1] to Blender's linear color space."""
+    channel = _clamp01(channel)
+    if channel <= 0.04045:
+        return channel / 12.92
+    return ((channel + 0.055) / 1.055) ** 2.4
+
+
+def _srgb_rgba_to_linear(
+    rgba: Tuple[float, float, float, float],
+) -> Tuple[float, float, float, float]:
+    """Convert sRGB RGBA tuple to linear RGB with unchanged alpha."""
+    return (
+        _srgb_channel_to_linear(float(rgba[0])),
+        _srgb_channel_to_linear(float(rgba[1])),
+        _srgb_channel_to_linear(float(rgba[2])),
+        _clamp01(float(rgba[3])),
+    )
+
+
 def _parse_svg_color(value: Optional[str]) -> Optional[Tuple[float, float, float, float]]:
     """Parse SVG color string into RGBA."""
     if value is None:
@@ -206,7 +226,7 @@ def _parse_svg_color(value: Optional[str]) -> Optional[Tuple[float, float, float
         "grey": (0.5, 0.5, 0.5, 1.0),
     }
     if text in named:
-        return named[text]
+        return _srgb_rgba_to_linear(named[text])
 
     if text.startswith("#"):
         hexv = text[1:]
@@ -214,24 +234,24 @@ def _parse_svg_color(value: Optional[str]) -> Optional[Tuple[float, float, float
             r = int(hexv[0] * 2, 16)
             g = int(hexv[1] * 2, 16)
             b = int(hexv[2] * 2, 16)
-            return (r / 255.0, g / 255.0, b / 255.0, 1.0)
+            return _srgb_rgba_to_linear((r / 255.0, g / 255.0, b / 255.0, 1.0))
         if len(hexv) == 4:
             r = int(hexv[0] * 2, 16)
             g = int(hexv[1] * 2, 16)
             b = int(hexv[2] * 2, 16)
             a = int(hexv[3] * 2, 16)
-            return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+            return _srgb_rgba_to_linear((r / 255.0, g / 255.0, b / 255.0, a / 255.0))
         if len(hexv) == 6:
             r = int(hexv[0:2], 16)
             g = int(hexv[2:4], 16)
             b = int(hexv[4:6], 16)
-            return (r / 255.0, g / 255.0, b / 255.0, 1.0)
+            return _srgb_rgba_to_linear((r / 255.0, g / 255.0, b / 255.0, 1.0))
         if len(hexv) == 8:
             r = int(hexv[0:2], 16)
             g = int(hexv[2:4], 16)
             b = int(hexv[4:6], 16)
             a = int(hexv[6:8], 16)
-            return (r / 255.0, g / 255.0, b / 255.0, a / 255.0)
+            return _srgb_rgba_to_linear((r / 255.0, g / 255.0, b / 255.0, a / 255.0))
         return None
 
     rgb_match = re.match(r"rgba?\(([^)]+)\)", text)
@@ -250,7 +270,7 @@ def _parse_svg_color(value: Optional[str]) -> Optional[Tuple[float, float, float
             g = channel(tokens[1])
             b = channel(tokens[2])
             a = _parse_opacity(tokens[3], 1.0) if len(tokens) >= 4 else 1.0
-            return (r, g, b, a)
+            return _srgb_rgba_to_linear((r, g, b, a))
         except ValueError:
             return None
     return None
@@ -715,20 +735,32 @@ def _collect_text_items(root: ET.Element) -> List[Dict[str, object]]:
 def _collect_image_items(root: ET.Element) -> List[Dict[str, object]]:
     """Extract SVG image nodes."""
     image_items: List[Dict[str, object]] = []
-    for index, image_node in enumerate(root.findall(".//svg:image", NS)):
-        href = image_node.get(f"{{{XLINK_NS}}}href") or image_node.get("href")
-        if not href:
-            continue
-        image_items.append(
-            {
-                "name": image_node.get("id") or f"Image_{index + 1}",
-                "href": href.strip(),
-                "x": _parse_svg_number(image_node.get("x"), 0.0),
-                "y": _parse_svg_number(image_node.get("y"), 0.0),
-                "width": _parse_svg_number(image_node.get("width"), 1.0),
-                "height": _parse_svg_number(image_node.get("height"), 1.0),
-            }
-        )
+    image_index = 0
+
+    def walk(node: ET.Element, definition_context: bool = False) -> None:
+        nonlocal image_index
+        if not isinstance(node.tag, str):
+            return
+        tag = _local_name(node.tag)
+        in_definition = definition_context or tag in {"defs", "mask", "clipPath", "symbol", "pattern"}
+        if tag == "image" and not in_definition:
+            href = node.get(f"{{{XLINK_NS}}}href") or node.get("href")
+            if href:
+                image_index += 1
+                image_items.append(
+                    {
+                        "name": node.get("id") or f"Image_{image_index}",
+                        "href": href.strip(),
+                        "x": _parse_svg_number(node.get("x"), 0.0),
+                        "y": _parse_svg_number(node.get("y"), 0.0),
+                        "width": _parse_svg_number(node.get("width"), 1.0),
+                        "height": _parse_svg_number(node.get("height"), 1.0),
+                    }
+                )
+        for child in list(node):
+            walk(child, in_definition)
+
+    walk(root, False)
     return image_items
 
 
@@ -1231,10 +1263,10 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
         nonlocal item_counter
 
         node_masks, node_clips = _extract_mask_clip_refs(node)
-        active_masks = set(inherited_masks)
-        active_masks.update(node_masks)
-        active_clips = set(inherited_clips)
-        active_clips.update(node_clips)
+        # GP layer masks should form a chain, so each geometry item only keeps the
+        # nearest active mask/clip container instead of accumulating all ancestors.
+        active_masks = set(node_masks) if node_masks else set(inherited_masks)
+        active_clips = set(node_clips) if node_clips else set(inherited_clips)
         active_style = dict(inherited_style)
         active_style.update(_presentation_style(node))
         active_transform = _matrix_multiply(inherited_transform, _parse_transform_attr(node.get("transform")))
@@ -1373,18 +1405,20 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
                     unresolved_refs.append(definition_ref)
                     continue
 
-                matched_layers: List[str] = []
+                transformed_matches: List[str] = []
                 signatures = _collect_geometry_signatures(definition_node, target_transform)
                 for signature in signatures:
-                    matched_layers.extend(signature_to_layers.get(signature, []))
-                if not matched_layers:
+                    transformed_matches.extend(signature_to_layers.get(signature, []))
+
+                raw_matches: List[str] = []
+                if not transformed_matches or target_layer_name in transformed_matches:
                     raw_signatures = _collect_geometry_signatures(definition_node, include_transform=False)
                     for signature in raw_signatures:
-                        matched_layers.extend(signature_to_layers_raw.get(signature, []))
+                        raw_matches.extend(signature_to_layers_raw.get(signature, []))
 
-                matched_all = list(dict.fromkeys(matched_layers))
+                matched_all = list(dict.fromkeys(transformed_matches + raw_matches))
                 matched_non_self = [name for name in matched_all if name != target_layer_name]
-                if not matched_all:
+                if not matched_non_self:
                     # Fallback for editor exports with tiny geometric deltas
                     # (e.g. viewport clip rect dimensions rounded differently).
                     definition_bounds = _definition_geometry_bounds(definition_node, target_transform)
@@ -1394,7 +1428,8 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
                         if score > 0.98:
                             scored_matches.append((score, candidate_name))
                     scored_matches.sort(reverse=True)
-                    matched_all = [name for _, name in scored_matches]
+                    bounds_matches = [name for _, name in scored_matches]
+                    matched_all = list(dict.fromkeys(matched_all + bounds_matches))
                     matched_non_self = [name for name in matched_all if name != target_layer_name]
 
                 if matched_non_self:
@@ -1606,6 +1641,16 @@ def _set_gp_layer_holdout(layer: object) -> bool:
     return False
 
 
+def _set_gp_layer_unlit(layer: object) -> None:
+    """Disable GP layer lighting so imported SVG colors remain flat."""
+    for attr in ("use_lights", "lights"):
+        if hasattr(layer, attr):
+            try:
+                setattr(layer, attr, False)
+            except Exception:
+                pass
+
+
 def _add_gp_layer_mask(gp_obj: bpy.types.Object, target_layer: object, mask_layer: object) -> bool:
     """Attach a GP layer mask relation when supported by API."""
     if not hasattr(target_layer, "mask_layers"):
@@ -1803,6 +1848,13 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
     except Exception:
         pass
 
+    for attr in ("use_grease_pencil_lights", "use_lights"):
+        if hasattr(gp_obj, attr):
+            try:
+                setattr(gp_obj, attr, False)
+            except Exception:
+                pass
+
     visible_names = plan["visible_names"]
     mask_names = plan["mask_names"]
     clip_names = plan["clip_names"]
@@ -1816,11 +1868,18 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
         layer = _find_gp_layer(gp_obj, name)
         if layer:
             _set_gp_layer_hidden(layer)
+            _set_gp_layer_unlit(layer)
     for name in clip_names:
         layer = _find_gp_layer(gp_obj, name)
         if layer:
             _set_gp_layer_hidden(layer)
             _set_gp_layer_holdout(layer)
+            _set_gp_layer_unlit(layer)
+
+    for name in visible_names:
+        layer = _find_gp_layer(gp_obj, name)
+        if layer:
+            _set_gp_layer_unlit(layer)
 
     mask_bindings = plan["mask_bindings"]
     clip_bindings = plan["clip_bindings"]
@@ -2050,6 +2109,12 @@ def _apply_style_to_gp_material(
     if style is None:
         return
 
+    if hasattr(material, "use_nodes"):
+        try:
+            material.use_nodes = False
+        except Exception:
+            pass
+
     fill_kind = str(fill_spec.get("kind", "SOLID"))
     stroke_kind = str(stroke_spec.get("kind", "NONE"))
 
@@ -2184,6 +2249,39 @@ def _apply_style_to_gp_material(
                     except Exception:
                         pass
 
+    display_color = None
+    if fill_kind == "GRADIENT":
+        gradient_id = str(fill_spec.get("gradient_id", ""))
+        gradient = gradient_defs.get(gradient_id, {})
+        display_color = gradient.get("first_color")
+    elif fill_kind == "SOLID":
+        display_color = fill_spec.get("color")
+    elif stroke_kind == "SOLID":
+        display_color = stroke_spec.get("color")
+
+    if isinstance(display_color, tuple) and len(display_color) >= 4:
+        rgba = (
+            float(display_color[0]),
+            float(display_color[1]),
+            float(display_color[2]),
+            float(display_color[3]),
+        )
+        if hasattr(material, "diffuse_color"):
+            try:
+                material.diffuse_color = rgba
+            except Exception:
+                pass
+        if hasattr(material, "surface_render_method"):
+            try:
+                material.surface_render_method = "BLENDED" if rgba[3] < 0.999 else "DITHERED"
+            except Exception:
+                pass
+        if hasattr(material, "use_transparency_overlap"):
+            try:
+                material.use_transparency_overlap = True
+            except Exception:
+                pass
+
 
 def _desired_material_base_name(fill_spec: Dict[str, object], stroke_spec: Dict[str, object]) -> str:
     """Return preferred material base name by role."""
@@ -2194,6 +2292,79 @@ def _desired_material_base_name(fill_spec: Dict[str, object], stroke_spec: Dict[
     if stroke_kind != "NONE":
         return "Stroke"
     return "Stroke"
+
+
+def _remove_drawing_override_attributes(drawing: object) -> None:
+    """Remove imported GP color override attributes so material colors stay live."""
+    removable_names = {"fill_color", "stroke_color", "vertex_color", "fill_opacity"}
+    for group_name in ("color_attributes", "attributes"):
+        group = getattr(drawing, group_name, None)
+        if group is None or not hasattr(group, "remove"):
+            continue
+        to_remove = []
+        try:
+            for attribute in group:
+                if getattr(attribute, "name", "") in removable_names:
+                    to_remove.append(attribute)
+        except Exception:
+            continue
+        for attribute in to_remove:
+            try:
+                group.remove(attribute)
+            except Exception:
+                pass
+
+
+def _rounded_color_key(color: Optional[Tuple[float, float, float, float]]) -> Optional[Tuple[float, float, float, float]]:
+    """Normalize color tuple for material cache keys."""
+    if color is None:
+        return None
+    return tuple(round(float(channel), 6) for channel in color[:4])
+
+
+def _material_cache_key(
+    fill_spec: Dict[str, object],
+    stroke_spec: Dict[str, object],
+    gradient_defs: Dict[str, Dict[str, object]],
+    bounds: Optional[Tuple[float, float, float, float]],
+    layer_transform: Tuple[float, float, float, float, float, float],
+) -> Tuple[object, ...]:
+    """Build stable cache key so identical SVG materials reuse GP materials."""
+    fill_kind = str(fill_spec.get("kind", "NONE"))
+    stroke_kind = str(stroke_spec.get("kind", "NONE"))
+
+    fill_key: Tuple[object, ...]
+    if fill_kind == "SOLID":
+        fill_key = ("SOLID", _rounded_color_key(fill_spec.get("color")))  # type: ignore[arg-type]
+    elif fill_kind == "GRADIENT":
+        gradient_id = str(fill_spec.get("gradient_id", ""))
+        gradient = gradient_defs.get(gradient_id, {})
+        start, end = _gradient_world_endpoints(gradient, bounds, layer_transform)
+        location, angle, scale = _gradient_mapping_from_endpoints(start, end, bounds)
+        fill_key = (
+            "GRADIENT",
+            str(gradient.get("type", "LINEAR")),
+            _rounded_color_key(gradient.get("first_color")),  # type: ignore[arg-type]
+            _rounded_color_key(gradient.get("second_color")),  # type: ignore[arg-type]
+            round(float(location[0]), 6),
+            round(float(location[1]), 6),
+            round(float(angle), 6),
+            round(float(scale[0]), 6),
+            round(float(scale[1]), 6),
+        )
+    else:
+        fill_key = ("NONE",)
+
+    if stroke_kind == "SOLID":
+        stroke_key = (
+            "SOLID",
+            _rounded_color_key(stroke_spec.get("color")),  # type: ignore[arg-type]
+            round(float(stroke_spec.get("width", 0.0)), 6),
+        )
+    else:
+        stroke_key = ("NONE",)
+
+    return (fill_key, stroke_key)
 
 
 def _ensure_material_slot(gp_obj: bpy.types.Object, material: bpy.types.Material) -> int:
@@ -2217,6 +2388,9 @@ def _assign_material_to_layer_content(
     layer: object,
     material: bpy.types.Material,
     material_index: int,
+    fill_spec: Dict[str, object],
+    stroke_spec: Dict[str, object],
+    gradient_defs: Dict[str, Dict[str, object]],
 ) -> None:
     """Best-effort assignment of material to GP layer geometry."""
     for attr in ("material", "active_material"):
@@ -2248,26 +2422,7 @@ def _assign_material_to_layer_content(
                         stroke.material_index = material_index
                     except Exception:
                         pass
-                # Keep imported tint attributes neutral so GP materials stay visible
-                # while still driving the final appearance.
-                if hasattr(stroke, "fill_color"):
-                    try:
-                        stroke.fill_color = (1.0, 1.0, 1.0, 1.0)
-                    except Exception:
-                        pass
-                if hasattr(stroke, "fill_opacity"):
-                    try:
-                        stroke.fill_opacity = 1.0
-                    except Exception:
-                        pass
-                points = getattr(stroke, "points", None)
-                if points:
-                    for point in points:
-                        if hasattr(point, "vertex_color"):
-                            try:
-                                point.vertex_color = (1.0, 1.0, 1.0, 1.0)
-                            except Exception:
-                                pass
+        _remove_drawing_override_attributes(drawing)
 
         attributes = getattr(drawing, "attributes", None)
         if attributes is not None:
@@ -2282,24 +2437,6 @@ def _assign_material_to_layer_content(
                             item.value = material_index
                         except Exception:
                             pass
-            # Some import paths write explicit stroke/point color attributes.
-            # Set them to neutral values instead of zero so materials remain visible.
-            for attr_name, setter in (
-                ("fill_opacity", lambda item: setattr(item, "value", 1.0)),
-                ("fill_color", lambda item: setattr(item, "color", (1.0, 1.0, 1.0, 1.0))),
-                ("vertex_color", lambda item: setattr(item, "color", (1.0, 1.0, 1.0, 1.0))),
-            ):
-                try:
-                    attr = attributes.get(attr_name)
-                except Exception:
-                    attr = None
-                if attr is None:
-                    continue
-                for item in getattr(attr, "data", []):
-                    try:
-                        setter(item)
-                    except Exception:
-                        pass
 
 
 def _layer_used_material_indices(layer: object) -> List[int]:
@@ -2374,6 +2511,7 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
         return
 
     claimed_existing_indices: Set[int] = set()
+    material_cache: Dict[Tuple[object, ...], Tuple[bpy.types.Material, int]] = {}
 
     for layer_name in layer_names:
         fill_spec = layer_fill_specs.get(layer_name) or {"kind": "NONE"}
@@ -2387,6 +2525,27 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
             continue
         layer = _find_gp_layer(gp_obj, layer_name)
         if layer is None:
+            continue
+
+        cache_key = _material_cache_key(
+            fill_spec,
+            stroke_spec,
+            gradient_defs,
+            layer_bounds.get(layer_name),
+            layer_transforms.get(layer_name, _matrix_identity()),
+        )
+        cached_entry = material_cache.get(cache_key)
+        if cached_entry is not None:
+            cached_material, cached_index = cached_entry
+            _assign_material_to_layer_content(
+                gp_obj,
+                layer,
+                cached_material,
+                cached_index,
+                fill_spec,
+                stroke_spec,
+                gradient_defs,
+            )
             continue
 
         slots = getattr(gp_obj.data, "materials", None)
@@ -2422,7 +2581,16 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
                 except Exception:
                     pass
                 claimed_existing_indices.add(primary_index)
-                _assign_material_to_layer_content(gp_obj, layer, material, primary_index)
+                _assign_material_to_layer_content(
+                    gp_obj,
+                    layer,
+                    material,
+                    primary_index,
+                    fill_spec,
+                    stroke_spec,
+                    gradient_defs,
+                )
+                material_cache[cache_key] = (material, primary_index)
                 continue
 
         material = bpy.data.materials.new(base_material_name)
@@ -2437,7 +2605,16 @@ def _apply_gp_materials(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> No
         material_index = _ensure_material_slot(gp_obj, material)
         if material_index >= 0:
             claimed_existing_indices.add(material_index)
-            _assign_material_to_layer_content(gp_obj, layer, material, material_index)
+            _assign_material_to_layer_content(
+                gp_obj,
+                layer,
+                material,
+                material_index,
+                fill_spec,
+                stroke_spec,
+                gradient_defs,
+            )
+            material_cache[cache_key] = (material, material_index)
 
 
 def _link_object_like(source_obj: bpy.types.Object, new_obj: bpy.types.Object, scene: bpy.types.Scene) -> None:

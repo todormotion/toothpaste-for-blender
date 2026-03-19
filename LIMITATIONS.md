@@ -1,6 +1,6 @@
 # SVG Support Limitations
 
-ToothPaste for Blender implements a practical subset of SVG import behavior for Blender 4.3+ (Grease Pencil v3).
+ToothPaste for Blender implements a practical subset of SVG import behavior for Blender 4.3+ including Blender 5.1 (Grease Pencil v3).
 
 ## Supported
 
@@ -8,10 +8,13 @@ ToothPaste for Blender implements a practical subset of SVG import behavior for 
 - Top-level group/layer workflows via `<g>`
 - CSS class style inlining from `<style>` blocks (common Illustrator export style)
 - Fill/stroke color mapping to GP materials
+- Imported GP strokes remain material-driven after import, so later material edits continue to affect the viewport
 - Stroke width mapping (best effort)
 - Mask/clip reconstruction using GP layer masks and holdout (common cases)
+- Nested mask/clip chains resolve to the nearest parent mask layer for each imported GP layer
 - Text extraction from `<text>` into Blender FONT objects
 - SVG `<image>` support for base64 data and valid local paths
+- Images embedded only inside `defs`, `mask`, `clipPath`, `symbol`, or `pattern` containers are ignored
 - Clipboard image paste via Blender built-in functionality
 
 ## Partial Support
