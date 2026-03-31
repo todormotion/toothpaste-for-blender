@@ -1,4 +1,4 @@
-# ToothPaste for Blender v1.1.4
+# ToothPaste for Blender v1.1.5
 
 Paste SVG content from clipboard into Blender as Grease Pencil, Curves, Text, and Images.
 
@@ -127,7 +127,15 @@ Important:
 
 ## Changelog
 
-### v1.1.4 (current line)
+### v1.1.5 (current line)
+
+- Fixed complex Illustrator Grease Pencil imports where top-level clipping could hide the whole object
+- Fixed non-split Figma Grease Pencil imports so group-level masks/styles are preserved
+- Added repeated `Pasted SVG` collection naming using Blender's native `.001` suffix behavior
+- Added SVG group-to-Grease Pencil group mapping improvements across layer/group-style exports
+- Added grouped curve stacking so objects from the same SVG group can share one stack level
+
+### v1.1.4
 
 - Blender 5.1 support
 - Materials now transfer from SVG to Grease Pencil correctly and stay editable after import

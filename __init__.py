@@ -13,7 +13,7 @@ V1.1 highlights:
 bl_info = {
     "name": "ToothPaste for Blender",
     "author": "Cosmonavt",
-    "version": (1, 1, 4),
+    "version": (1, 1, 5),
     "blender": (4, 3, 0),
     "category": "Import-Export",
     "location": "View3D > Sidebar > ToothPaste",
@@ -24,6 +24,9 @@ import base64
 import math
 import os
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set, Tuple
@@ -49,6 +52,16 @@ SUPPORTED_SHAPES = {"rect", "circle", "ellipse", "line", "polyline", "polygon"}
 SUPPORTED_GEOMETRY = {"path"} | SUPPORTED_SHAPES
 MASK_LAYER_PREFIX = "__TP_MASK__"
 CLIP_LAYER_PREFIX = "__TP_CLIP__"
+RESOURCE_TAGS = {
+    "defs",
+    "style",
+    "clipPath",
+    "mask",
+    "linearGradient",
+    "radialGradient",
+    "pattern",
+    "symbol",
+}
 
 ET.register_namespace("", SVG_NS)
 ET.register_namespace("xlink", XLINK_NS)
@@ -282,10 +295,13 @@ def _presentation_style(element: ET.Element) -> Dict[str, str]:
     for key in (
         "fill",
         "fill-opacity",
+        "fill-rule",
         "stroke",
         "stroke-opacity",
         "opacity",
         "stroke-width",
+        "stroke-linecap",
+        "stroke-linejoin",
         "clip-path",
         "mask",
     ):
@@ -557,11 +573,71 @@ def validate_svg_string(svg_string: str) -> bool:
     return True
 
 
+def _extract_svg_fragment(text: Optional[str]) -> str:
+    """Extract the actual SVG XML fragment from clipboard-like text."""
+    if not text:
+        return ""
+
+    cleaned = str(text).replace("\x00", "").lstrip("\ufeff").strip()
+    if not cleaned:
+        return ""
+
+    try:
+        validate_svg_string(cleaned)
+        return cleaned
+    except InvalidSVGError:
+        pass
+
+    start = cleaned.find("<svg")
+    if start == -1:
+        return cleaned
+
+    end_match = re.search(r"</svg\s*>", cleaned[start:], re.IGNORECASE)
+    if end_match:
+        end = start + end_match.end()
+        return cleaned[start:end].strip()
+    return cleaned[start:].strip()
+
+
+def _read_platform_clipboard_text() -> str:
+    """Best-effort fallback clipboard text reader when Blender clipboard is empty."""
+    commands: List[List[str]] = []
+    if sys.platform == "darwin":
+        commands.append(["pbpaste"])
+    elif sys.platform.startswith("win"):
+        commands.append(["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"])
+    else:
+        if shutil.which("wl-paste"):
+            commands.append(["wl-paste", "-n"])
+        if shutil.which("xclip"):
+            commands.append(["xclip", "-selection", "clipboard", "-o"])
+        if shutil.which("xsel"):
+            commands.append(["xsel", "--clipboard", "--output"])
+
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            continue
+        if result.returncode != 0:
+            continue
+        fragment = _extract_svg_fragment(result.stdout)
+        if fragment:
+            return fragment
+    return ""
+
+
 def parse_svg_root(svg_data: str) -> ET.Element:
     """Parse SVG string to XML root."""
-    validate_svg_string(svg_data)
+    svg_fragment = _extract_svg_fragment(svg_data)
+    validate_svg_string(svg_fragment)
     try:
-        root = ET.fromstring(svg_data)
+        root = ET.fromstring(svg_fragment)
     except ET.ParseError as exc:
         raise InvalidSVGError(f"Invalid XML format: {exc}") from exc
     _inline_css_class_styles(root)
@@ -575,11 +651,15 @@ def get_clipboard_svg() -> str:
     except Exception as exc:
         raise ClipboardError(f"Failed to access clipboard: {exc}") from exc
 
+    svg_fragment = _extract_svg_fragment(clipboard_text)
+    if not svg_fragment:
+        svg_fragment = _read_platform_clipboard_text()
+
     try:
-        validate_svg_string(clipboard_text)
+        validate_svg_string(svg_fragment)
     except InvalidSVGError as exc:
         raise ClipboardError(f"Clipboard does not contain valid SVG: {exc}") from exc
-    return clipboard_text
+    return svg_fragment
 
 
 def convert_shape_to_path(element: ET.Element) -> Optional[str]:
@@ -630,24 +710,39 @@ def _layer_name_from_group(group: ET.Element, index: int) -> str:
     return (
         group.attrib.get("id")
         or group.attrib.get(f"{{{INKSCAPE_NS}}}label")
-        or f"Layer_{index + 1}"
+        or f"Group_{index + 1}"
     )
 
 
-def _collect_top_level_groups(root: ET.Element) -> List[ET.Element]:
-    """Return SVG groups used as logical layers; build fallback layer when needed."""
-    groups = root.findall("./svg:g", NS)
-    if groups:
-        return groups
+def _group_name_from_node(node: ET.Element) -> str:
+    """Extract preferred grouping name from an SVG group node."""
+    return (
+        node.attrib.get("id")
+        or node.attrib.get(f"{{{INKSCAPE_NS}}}label")
+        or ""
+    ).strip()
 
+
+def _collect_top_level_groups(root: ET.Element) -> List[ET.Element]:
+    """Return SVG groups used as logical layers plus any ungrouped root content."""
+    groups = root.findall("./svg:g", NS)
     fallback_group = ET.Element(f"{{{SVG_NS}}}g", {"id": "Layer_1"})
     has_content = False
     for child in list(root):
         tag = _local_name(child.tag)
         if tag in {"defs", "metadata", "title", "desc"}:
             continue
+        if tag == "g":
+            continue
         fallback_group.append(_clone_xml_element(child))
         has_content = True
+
+    if groups and has_content:
+        ungrouped = _clone_xml_element(fallback_group)
+        ungrouped.set("id", "Ungrouped")
+        return groups + [ungrouped]
+    if groups:
+        return groups
     return [fallback_group] if has_content else []
 
 
@@ -800,9 +895,51 @@ def parse_svg(svg_data: str) -> List[Dict[str, object]]:
 def _build_svg_document(source_root: ET.Element, group_elements: List[ET.Element]) -> str:
     """Build SVG string with specific top-level groups and source root attributes."""
     root_copy = ET.Element(source_root.tag, dict(source_root.attrib))
+    for child in list(source_root):
+        if not isinstance(child.tag, str):
+            continue
+        if _local_name(child.tag) in RESOURCE_TAGS:
+            root_copy.append(_clone_xml_element(child))
     for group in group_elements:
         root_copy.append(_clone_xml_element(group))
     return ET.tostring(root_copy, encoding="unicode")
+
+
+def _strip_mask_clip_references(
+    node: ET.Element,
+    keep_mask_refs: Optional[Set[str]] = None,
+    keep_clip_refs: Optional[Set[str]] = None,
+) -> None:
+    """Remove only SVG mask/clip refs that ToothPaste is rebuilding in GP."""
+    if not isinstance(node.tag, str):
+        return
+
+    keep_mask_refs = keep_mask_refs or set()
+    keep_clip_refs = keep_clip_refs or set()
+
+    mask_attr = _extract_url_ref(node.get("mask"))
+    if mask_attr and mask_attr not in keep_mask_refs and "mask" in node.attrib:
+        del node.attrib["mask"]
+
+    clip_attr = _extract_url_ref(node.get("clip-path"))
+    if clip_attr and clip_attr not in keep_clip_refs and "clip-path" in node.attrib:
+        del node.attrib["clip-path"]
+
+    style = _parse_style(node.get("style"))
+    if style:
+        style_mask = _extract_url_ref(style.get("mask"))
+        if style_mask and style_mask not in keep_mask_refs:
+            style.pop("mask", None)
+        style_clip = _extract_url_ref(style.get("clip-path"))
+        if style_clip and style_clip not in keep_clip_refs:
+            style.pop("clip-path", None)
+        if style:
+            node.set("style", _style_to_string(style))
+        elif "style" in node.attrib:
+            del node.attrib["style"]
+
+    for child in list(node):
+        _strip_mask_clip_references(child, keep_mask_refs, keep_clip_refs)
 
 
 def _flatten_layers_to_group(layers: List[Dict[str, object]], name: str = "Layer_1") -> Optional[ET.Element]:
@@ -812,8 +949,7 @@ def _flatten_layers_to_group(layers: List[Dict[str, object]], name: str = "Layer
     flattened = ET.Element(f"{{{SVG_NS}}}g", {"id": name})
     for layer in layers:
         group = layer["element"]
-        for child in list(group):
-            flattened.append(_clone_xml_element(child))
+        flattened.append(_clone_xml_element(group))
     return flattened if len(flattened) else None
 
 
@@ -1198,7 +1334,7 @@ def _bounds_match_score(
     left: Optional[Tuple[float, float, float, float]],
     right: Optional[Tuple[float, float, float, float]],
 ) -> float:
-    """Score bounds overlap/containment similarity in [0, 1]."""
+    """Score bounds similarity in [0, 1], preferring near-equal shapes."""
     if left is None or right is None:
         return 0.0
     lx0, ly0, lx1, ly1 = left
@@ -1210,7 +1346,8 @@ def _bounds_match_score(
         return 0.0
     left_area = max((lx1 - lx0) * (ly1 - ly0), 1e-9)
     right_area = max((rx1 - rx0) * (ry1 - ry0), 1e-9)
-    return intersection / min(left_area, right_area)
+    union = max(left_area + right_area - intersection, 1e-9)
+    return intersection / union
 
 
 def _collect_geometry_signatures(
@@ -1251,6 +1388,7 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
     layer_name = str(layer["name"])
     split_items: List[Dict[str, object]] = []
     item_counter = 0
+    anonymous_group_counter = 0
 
     def walk(
         node: ET.Element,
@@ -1258,9 +1396,11 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
         inherited_clips: Set[str],
         inherited_style: Dict[str, str],
         inherited_transform: Tuple[float, float, float, float, float, float],
+        inherited_group_path: Tuple[str, ...],
+        is_root: bool,
         definition_context: bool = False,
     ) -> None:
-        nonlocal item_counter
+        nonlocal item_counter, anonymous_group_counter
 
         node_masks, node_clips = _extract_mask_clip_refs(node)
         # GP layer masks should form a chain, so each geometry item only keeps the
@@ -1273,10 +1413,23 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
 
         tag = _local_name(node.tag)
         is_definition_container = definition_context or tag in {"clipPath", "mask", "defs", "symbol"}
+        active_group_path = inherited_group_path
+        if tag == "g" and not is_definition_container and not is_root:
+            group_name = _group_name_from_node(node)
+            if not group_name:
+                anonymous_group_counter += 1
+                group_name = f"Group_{anonymous_group_counter}"
+            if group_name:
+                active_group_path = inherited_group_path + (group_name,)
 
         if tag in SUPPORTED_GEOMETRY and not is_definition_container:
             geometry = _geometry_to_import_element(node)
             if geometry is not None:
+                for style_key, style_value in active_style.items():
+                    if style_value:
+                        geometry.set(style_key, style_value)
+                if "class" in geometry.attrib:
+                    del geometry.attrib["class"]
                 item_counter += 1
                 raw_name = node.get("id") or f"{layer_name}_{item_counter}"
                 item_group = ET.Element(f"{{{SVG_NS}}}g", {"id": raw_name})
@@ -1297,6 +1450,7 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
                         "transform": active_transform,
                         "mask_refs": sorted(active_masks),
                         "clip_refs": sorted(active_clips),
+                        "group_path": list(active_group_path) if active_group_path else [layer_name],
                     }
                 )
 
@@ -1308,10 +1462,12 @@ def _collect_split_geometry_groups(layer: Dict[str, object]) -> List[Dict[str, o
                     active_clips,
                     active_style,
                     active_transform,
+                    active_group_path,
+                    False,
                     is_definition_container,
                 )
 
-    walk(layer_group, set(), set(), {}, _matrix_identity(), False)
+    walk(layer_group, set(), set(), {}, _matrix_identity(), (layer_name,), True, False)
     return split_items
 
 
@@ -1333,6 +1489,7 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
     layer_stroke_specs: Dict[str, Dict[str, object]] = {}
     layer_bounds: Dict[str, Optional[Tuple[float, float, float, float]]] = {}
     layer_transforms: Dict[str, Tuple[float, float, float, float, float, float]] = {}
+    layer_group_paths: Dict[str, List[str]] = {}
     split_curve_groups: List[Dict[str, object]] = []
     signature_to_layers: Dict[str, List[str]] = {}
     signature_to_layers_raw: Dict[str, List[str]] = {}
@@ -1355,7 +1512,14 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
                 layer_stroke_specs[unique_name] = dict(item.get("stroke_spec") or {})
                 layer_bounds[unique_name] = item.get("bounds")
                 layer_transforms[unique_name] = item.get("transform") or _matrix_identity()
-                split_curve_groups.append({"name": unique_name, "element": group})
+                layer_group_paths[unique_name] = list(item.get("group_path") or [unique_name])
+                split_curve_groups.append(
+                    {
+                        "name": unique_name,
+                        "element": group,
+                        "group_path": list(item.get("group_path") or [unique_name]),
+                    }
+                )
                 signature = item.get("signature")
                 if signature:
                     signature_to_layers.setdefault(str(signature), []).append(unique_name)
@@ -1375,7 +1539,8 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
                 layer_stroke_specs[unique_name] = {}
                 layer_bounds[unique_name] = None
                 layer_transforms[unique_name] = _matrix_identity()
-                split_curve_groups.append({"name": unique_name, "element": group})
+                layer_group_paths[unique_name] = [unique_name]
+                split_curve_groups.append({"name": unique_name, "element": group, "group_path": [unique_name]})
     else:
         flat_group = _flatten_layers_to_group(layers, name="Layer_1")
         if flat_group is not None:
@@ -1389,10 +1554,12 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
             layer_stroke_specs["Layer_1"] = {}
             layer_bounds["Layer_1"] = None
             layer_transforms["Layer_1"] = _matrix_identity()
+            layer_group_paths["Layer_1"] = ["Layer_1"]
 
     def resolve_ref_bindings(
         refs_by_layer: Dict[str, List[str]],
         defs_by_id: Dict[str, ET.Element],
+        allow_bounds_fallback: bool = True,
     ) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
         """Resolve refs to visible layers when definitions match imported geometry."""
         resolved_layer_bindings: Dict[str, List[str]] = {}
@@ -1418,7 +1585,7 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
 
                 matched_all = list(dict.fromkeys(transformed_matches + raw_matches))
                 matched_non_self = [name for name in matched_all if name != target_layer_name]
-                if not matched_non_self:
+                if allow_bounds_fallback and not matched_non_self:
                     # Fallback for editor exports with tiny geometric deltas
                     # (e.g. viewport clip rect dimensions rounded differently).
                     definition_bounds = _definition_geometry_bounds(definition_node, target_transform)
@@ -1445,8 +1612,8 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
         return refs_by_layer, resolved_layer_bindings
 
     if split_layers and signature_to_layers:
-        clip_bindings, clip_layer_bindings = resolve_ref_bindings(clip_bindings, clip_defs)
-        mask_bindings, mask_layer_bindings = resolve_ref_bindings(mask_bindings, mask_defs)
+        clip_bindings, clip_layer_bindings = resolve_ref_bindings(clip_bindings, clip_defs, allow_bounds_fallback=False)
+        mask_bindings, mask_layer_bindings = resolve_ref_bindings(mask_bindings, mask_defs, allow_bounds_fallback=True)
 
     if not split_layers:
         # Single-layer GP import should not emit extra hidden helper layers.
@@ -1468,7 +1635,16 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
     mask_names = [group.get("id", "") for group in mask_groups]
     clip_names = [group.get("id", "") for group in clip_groups]
 
-    gp_groups = list(visible_groups)
+    gp_visible_groups = []
+    for group, visible_name in zip(visible_groups, visible_names):
+        group_copy = _clone_xml_element(group)
+        if split_layers:
+            keep_mask_refs = set(mask_bindings.get(visible_name, []))
+            keep_clip_refs = set(clip_bindings.get(visible_name, []))
+            _strip_mask_clip_references(group_copy, keep_mask_refs, keep_clip_refs)
+        gp_visible_groups.append(group_copy)
+
+    gp_groups = list(gp_visible_groups)
     gp_groups.extend(mask_groups)
     gp_groups.extend(clip_groups)
     gp_svg = _build_svg_document(root, gp_groups) if gp_groups else None
@@ -1488,6 +1664,7 @@ def _prepare_import_plan(root: ET.Element, split_layers: bool) -> Dict[str, obje
         "layer_stroke_specs": layer_stroke_specs,
         "layer_bounds": layer_bounds,
         "layer_transforms": layer_transforms,
+        "layer_group_paths": layer_group_paths,
         "gradient_defs": gradient_defs,
         "split_curve_groups": split_curve_groups,
         "gp_svg": gp_svg,
@@ -1512,6 +1689,108 @@ def _scene_object_pointers(scene: bpy.types.Scene) -> Set[int]:
 def _new_scene_objects(scene: bpy.types.Scene, before: Set[int]) -> List[bpy.types.Object]:
     """Return objects added to scene since snapshot."""
     return [obj for obj in scene.objects if obj.as_pointer() not in before]
+
+
+def _walk_scene_collections(root: bpy.types.Collection) -> List[bpy.types.Collection]:
+    """Return all collections reachable from a root collection."""
+    result: List[bpy.types.Collection] = [root]
+    for child in getattr(root, "children", []):
+        result.extend(_walk_scene_collections(child))
+    return result
+
+
+def _scene_collection_pointers(scene: bpy.types.Scene) -> Set[int]:
+    """Return current collection pointer ids reachable from the scene root."""
+    root = getattr(scene, "collection", None)
+    if root is None:
+        return set()
+    return {collection.as_pointer() for collection in _walk_scene_collections(root)}
+
+
+def _new_scene_collections(scene: bpy.types.Scene, before: Set[int]) -> List[bpy.types.Collection]:
+    """Return collections added under the scene root since snapshot."""
+    root = getattr(scene, "collection", None)
+    if root is None:
+        return []
+    return [collection for collection in _walk_scene_collections(root) if collection.as_pointer() not in before]
+
+
+def _ensure_named_collection(scene: bpy.types.Scene, name: str) -> bpy.types.Collection:
+    """Create a new root-level collection for pasted content."""
+    root = scene.collection
+    collection = bpy.data.collections.new(name)
+    root.children.link(collection)
+    return collection
+
+
+def _unlink_collection_from_tree(parent: bpy.types.Collection, target: bpy.types.Collection) -> bool:
+    """Unlink a collection from a parent tree if present."""
+    children = getattr(parent, "children", None)
+    if children is None:
+        return False
+    if target in children:
+        children.unlink(target)
+        return True
+    for child in list(children):
+        if _unlink_collection_from_tree(child, target):
+            return True
+    return False
+
+
+def _move_objects_to_collection(
+    scene: bpy.types.Scene,
+    objects: List[bpy.types.Object],
+    collection_name: str,
+    cleanup_collections: Optional[List[bpy.types.Collection]] = None,
+) -> Optional[bpy.types.Collection]:
+    """Move imported objects into one named collection and clean empty import collections."""
+    valid = [obj for obj in objects if obj is not None]
+    if not valid:
+        return None
+
+    target = _ensure_named_collection(scene, collection_name)
+    cleanup_targets = list(cleanup_collections or [])
+
+    for obj in valid:
+        already_linked = False
+        try:
+            already_linked = any(existing == obj for existing in target.objects)
+        except Exception:
+            already_linked = False
+        if not already_linked:
+            try:
+                target.objects.link(obj)
+            except Exception:
+                pass
+        previous_collections = [collection for collection in obj.users_collection if collection != target]
+        for collection in previous_collections:
+            try:
+                collection.objects.unlink(obj)
+            except Exception:
+                continue
+            if collection not in cleanup_targets:
+                cleanup_targets.append(collection)
+
+    for collection in cleanup_targets:
+        if collection == target or collection == scene.collection:
+            continue
+        try:
+            has_objects = len(collection.objects) > 0
+            has_children = len(collection.children) > 0
+        except Exception:
+            continue
+        if has_objects or has_children:
+            continue
+        try:
+            _unlink_collection_from_tree(scene.collection, collection)
+        except Exception:
+            pass
+        try:
+            bpy.data.collections.remove(collection)
+        except Exception:
+            pass
+
+    return target
 
 
 def _operator_supported_kwargs(operator_handle: object, kwargs: Dict[str, object]) -> Dict[str, object]:
@@ -1864,6 +2143,9 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
     if expected_names and not expected_names.issubset(existing_names):
         _rename_gp_layers(gp_obj, ordered_names)
 
+    if plan.get("create_gp_groups"):
+        _apply_gp_layer_groups(gp_obj, plan)
+
     for name in mask_names:
         layer = _find_gp_layer(gp_obj, name)
         if layer:
@@ -1923,6 +2205,69 @@ def _apply_gp_masks_and_holdout(gp_obj: bpy.types.Object, plan: Dict[str, object
             clip_layer = _find_gp_layer(gp_obj, layer_name)
             if clip_layer:
                 _add_gp_layer_mask(gp_obj, target_layer, clip_layer)
+
+
+def _apply_gp_layer_groups(gp_obj: bpy.types.Object, plan: Dict[str, object]) -> None:
+    """Create GP layer groups from SVG group paths when the API is available."""
+    if not is_valid_gp_object(gp_obj):
+        return
+
+    group_paths = plan.get("layer_group_paths") or {}
+    if not isinstance(group_paths, dict):
+        return
+
+    gp_data = getattr(gp_obj, "data", None)
+    if gp_data is None:
+        return
+
+    layer_groups = getattr(gp_data, "layer_groups", None)
+    layers_api = getattr(gp_data, "layers", None)
+    if layer_groups is None or layers_api is None:
+        return
+    if not hasattr(layer_groups, "new") or not hasattr(layers_api, "move_to_layer_group"):
+        return
+
+    created_groups: Dict[Tuple[str, ...], object] = {}
+    for layer_name, raw_path in group_paths.items():
+        layer = _find_gp_layer(gp_obj, layer_name)
+        if layer is None:
+            continue
+
+        path = tuple(segment for segment in raw_path if isinstance(segment, str) and segment.strip())
+        if not path:
+            continue
+
+        parent_group = None
+        current_path: Tuple[str, ...] = tuple()
+        for segment in path:
+            current_path = current_path + (segment,)
+            current_group = created_groups.get(current_path)
+            if current_group is None:
+                try:
+                    if parent_group is None:
+                        current_group = layer_groups.new(segment)
+                    else:
+                        current_group = layer_groups.new(segment, parent_group=parent_group)
+                except Exception:
+                    current_group = None
+                if current_group is None:
+                    break
+                created_groups[current_path] = current_group
+                for attr_name in ("is_expanded", "expanded"):
+                    if hasattr(current_group, attr_name):
+                        try:
+                            setattr(current_group, attr_name, False)
+                        except Exception:
+                            pass
+            parent_group = current_group
+
+        if parent_group is None:
+            continue
+
+        try:
+            layers_api.move_to_layer_group(layer, parent_group)
+        except Exception:
+            continue
 
 
 def _ensure_gp_material_data(material: bpy.types.Material) -> object:
@@ -2820,8 +3165,7 @@ def _create_image_plane(
         obj.location = (float(item["x"]) + half_w, -float(item["y"]) - half_h, 0.0)
         scene.collection.objects.link(obj)
         return obj
-    except Exception as exc:
-        print(f"ToothPaste: failed to create image plane: {exc}")
+    except Exception:
         return None
 
 
@@ -3007,6 +3351,46 @@ def _move_objects_to_target(objects: List[bpy.types.Object], scene: bpy.types.Sc
         obj.location.z += delta_z
 
 
+def _stack_curve_objects(objects: List[bpy.types.Object], axis: str, depth: float) -> None:
+    """Offset imported curve objects into a stack along one axis."""
+    valid = [obj for obj in objects if obj and obj.type == "CURVE" and hasattr(obj, "location")]
+    if len(valid) <= 1 or depth == 0.0:
+        return
+
+    axis_name = axis.upper()
+    for index, obj in enumerate(valid):
+        offset = float(index) * float(depth)
+        if axis_name == "X":
+            obj.location.x += offset
+        elif axis_name == "Y":
+            obj.location.y += offset
+        else:
+            obj.location.z += offset
+
+
+def _stack_curve_batches(
+    batches: List[Tuple[Tuple[str, ...], List[bpy.types.Object]]],
+    axis: str,
+    depth: float,
+) -> None:
+    """Offset curve batches so objects sharing one SVG group stay on the same level."""
+    if len(batches) <= 1 or depth == 0.0:
+        return
+
+    axis_name = axis.upper()
+    for batch_index, (_, objects) in enumerate(batches):
+        offset = float(batch_index) * float(depth)
+        for obj in objects:
+            if obj is None or obj.type != "CURVE" or not hasattr(obj, "location"):
+                continue
+            if axis_name == "X":
+                obj.location.x += offset
+            elif axis_name == "Y":
+                obj.location.y += offset
+            else:
+                obj.location.z += offset
+
+
 class TOOTHPASTE_OT_paste_svg(bpy.types.Operator):
     """Paste SVG as Grease Pencil object and rebuild masks/holdout where possible."""
 
@@ -3020,6 +3404,7 @@ class TOOTHPASTE_OT_paste_svg(bpy.types.Operator):
             root = parse_svg_root(svg_data)
             split_layers = context.scene.toothpaste_split_into_gp_layers
             plan = _prepare_import_plan(root, split_layers=split_layers)
+            plan["create_gp_groups"] = bool(context.scene.toothpaste_create_gp_groups and split_layers)
         except (ClipboardError, InvalidSVGError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -3032,9 +3417,11 @@ class TOOTHPASTE_OT_paste_svg(bpy.types.Operator):
             return {"CANCELLED"}
 
         gp_created = 0
+        gp_objects: List[bpy.types.Object] = []
         text_objects: List[bpy.types.Object] = []
         image_objects: List[bpy.types.Object] = []
         pasted_objects: List[bpy.types.Object] = []
+        before_collections = _scene_collection_pointers(context.scene)
 
         try:
             if has_importable:
@@ -3065,6 +3452,10 @@ class TOOTHPASTE_OT_paste_svg(bpy.types.Operator):
                 context.scene,
                 context.scene.toothpaste_paste_location,
             )
+            new_collections = _new_scene_collections(context.scene, before_collections)
+            _move_objects_to_collection(context.scene, gp_objects if has_importable else [], "Pasted SVG", new_collections)
+            _move_objects_to_collection(context.scene, text_objects, "Pasted Text")
+            _move_objects_to_collection(context.scene, image_objects, "Pasted Image")
         except Exception as exc:
             self.report({"ERROR"}, f"Import failed: {exc}")
             return {"CANCELLED"}
@@ -3094,9 +3485,11 @@ class TOOTHPASTE_OT_paste_svg_curve(bpy.types.Operator):
 
         metadata = plan["metadata"]
         curve_objects: List[bpy.types.Object] = []
+        curve_batches: List[Tuple[Tuple[str, ...], List[bpy.types.Object]]] = []
         text_objects: List[bpy.types.Object] = []
         image_objects: List[bpy.types.Object] = []
         pasted_objects: List[bpy.types.Object] = []
+        before_collections = _scene_collection_pointers(context.scene)
 
         try:
             if plan["split_curve_groups"]:
@@ -3111,9 +3504,12 @@ class TOOTHPASTE_OT_paste_svg_curve(bpy.types.Operator):
                         for index, obj in enumerate(layer_curves, start=1):
                             obj.name = f"{base}_{index}"
                     curve_objects.extend(layer_curves)
+                    curve_batches.append((tuple(layer.get("group_path") or [str(layer["name"])]), list(layer_curves)))
             elif plan["curve_svg"]:
                 new_objects = import_svg_via_tempfile(context, plan["curve_svg"], import_mode="CURVE")
                 curve_objects = [obj for obj in new_objects if obj.type == "CURVE"]
+                if curve_objects:
+                    curve_batches.append((("Pasted SVG",), list(curve_objects)))
 
             text_objects = create_text_from_svg(context.scene, metadata["texts"])
             image_objects = create_images_from_svg(
@@ -3129,6 +3525,30 @@ class TOOTHPASTE_OT_paste_svg_curve(bpy.types.Operator):
                 context.scene,
                 context.scene.toothpaste_paste_location,
             )
+            if context.scene.toothpaste_curve_stack_enabled:
+                if context.scene.toothpaste_curve_stack_keep_groups:
+                    grouped_batches: Dict[Tuple[str, ...], List[bpy.types.Object]] = {}
+                    ordered_keys: List[Tuple[str, ...]] = []
+                    for group_key, batch_objects in curve_batches:
+                        if group_key not in grouped_batches:
+                            grouped_batches[group_key] = []
+                            ordered_keys.append(group_key)
+                        grouped_batches[group_key].extend(batch_objects)
+                    _stack_curve_batches(
+                        [(group_key, grouped_batches[group_key]) for group_key in ordered_keys],
+                        context.scene.toothpaste_curve_stack_axis,
+                        context.scene.toothpaste_curve_stack_depth,
+                    )
+                else:
+                    _stack_curve_objects(
+                        curve_objects,
+                        context.scene.toothpaste_curve_stack_axis,
+                        context.scene.toothpaste_curve_stack_depth,
+                    )
+            new_collections = _new_scene_collections(context.scene, before_collections)
+            _move_objects_to_collection(context.scene, curve_objects, "Pasted SVG", new_collections)
+            _move_objects_to_collection(context.scene, text_objects, "Pasted Text")
+            _move_objects_to_collection(context.scene, image_objects, "Pasted Image")
         except Exception as exc:
             self.report({"ERROR"}, f"Curve import failed: {exc}")
             return {"CANCELLED"}
@@ -3179,6 +3599,7 @@ class TOOTHPASTE_OT_paste_clipboard_image(bpy.types.Operator):
                 context.scene,
                 context.scene.toothpaste_paste_location,
             )
+            _move_objects_to_collection(context.scene, [obj], "Pasted Image")
             self.report({"INFO"}, f"Pasted image: {image.name}")
             return {"FINISHED"}
         except Exception as exc:
@@ -3226,10 +3647,18 @@ class TOOTHPASTE_PT_panel(bpy.types.Panel):
         layout.label(text="Grease Pencil")
         layout.operator("toothpaste.paste_svg", icon="GREASEPENCIL")
         layout.prop(context.scene, "toothpaste_split_into_gp_layers", text="Split into GP Layers")
+        if context.scene.toothpaste_split_into_gp_layers:
+            layout.prop(context.scene, "toothpaste_create_gp_groups", text="Create GP Groups")
         layout.operator("gpencil.split_layers_into_objects", icon="GP_SELECT_POINTS")
         layout.separator()
         layout.label(text="Curves & Text")
         layout.operator("toothpaste.paste_svg_curve", icon="CURVE_DATA")
+        layout.prop(context.scene, "toothpaste_curve_stack_enabled", text="Stack Curve Objects")
+        if context.scene.toothpaste_curve_stack_enabled:
+            row = layout.row(align=True)
+            row.prop(context.scene, "toothpaste_curve_stack_axis", expand=True)
+            layout.prop(context.scene, "toothpaste_curve_stack_depth", text="Depth")
+            layout.prop(context.scene, "toothpaste_curve_stack_keep_groups", text="Keep Same SVG Group Level")
         layout.separator()
         layout.label(text="Images")
         layout.operator("toothpaste.paste_clipboard_image", icon="IMAGE_DATA")
@@ -3274,6 +3703,39 @@ def register():
         ],
         default="REFERENCE",
     )
+    bpy.types.Scene.toothpaste_create_gp_groups = bpy.props.BoolProperty(
+        name="Create GP Groups",
+        description="Create Grease Pencil layer groups from SVG groups when supported by Blender",
+        default=True,
+    )
+    bpy.types.Scene.toothpaste_curve_stack_enabled = bpy.props.BoolProperty(
+        name="Stack Curve Objects",
+        description="Offset imported curve objects into a viewport stack",
+        default=False,
+    )
+    bpy.types.Scene.toothpaste_curve_stack_axis = bpy.props.EnumProperty(
+        name="Stack Axis",
+        description="Axis used to offset the curve stack",
+        items=[
+            ("X", "X", "Stack imported curves on the X axis"),
+            ("Y", "Y", "Stack imported curves on the Y axis"),
+            ("Z", "Z", "Stack imported curves on the Z axis"),
+        ],
+        default="Z",
+    )
+    bpy.types.Scene.toothpaste_curve_stack_depth = bpy.props.FloatProperty(
+        name="Depth",
+        description="Distance between imported curve objects in the stack",
+        default=0.1,
+        min=-10000.0,
+        soft_min=-10.0,
+        soft_max=10.0,
+    )
+    bpy.types.Scene.toothpaste_curve_stack_keep_groups = bpy.props.BoolProperty(
+        name="Keep Same SVG Group Level",
+        description="Objects from the same SVG group share one stack level",
+        default=True,
+    )
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -3287,6 +3749,16 @@ def unregister():
         del bpy.types.Scene.toothpaste_paste_location
     if hasattr(bpy.types.Scene, "toothpaste_image_paste_mode"):
         del bpy.types.Scene.toothpaste_image_paste_mode
+    if hasattr(bpy.types.Scene, "toothpaste_create_gp_groups"):
+        del bpy.types.Scene.toothpaste_create_gp_groups
+    if hasattr(bpy.types.Scene, "toothpaste_curve_stack_enabled"):
+        del bpy.types.Scene.toothpaste_curve_stack_enabled
+    if hasattr(bpy.types.Scene, "toothpaste_curve_stack_axis"):
+        del bpy.types.Scene.toothpaste_curve_stack_axis
+    if hasattr(bpy.types.Scene, "toothpaste_curve_stack_depth"):
+        del bpy.types.Scene.toothpaste_curve_stack_depth
+    if hasattr(bpy.types.Scene, "toothpaste_curve_stack_keep_groups"):
+        del bpy.types.Scene.toothpaste_curve_stack_keep_groups
 
 
 if __name__ == "__main__":
