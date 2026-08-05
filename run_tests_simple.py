@@ -15,9 +15,13 @@ import bpy
 
 # Register the addon
 try:
-    # Load the addon module
+    # Load the addon as a package so its relative imports resolve.
     import importlib.util
-    spec = importlib.util.spec_from_file_location("toothpaste_addon", os.path.join(addon_dir, "__init__.py"))
+    spec = importlib.util.spec_from_file_location(
+        "toothpaste_addon",
+        os.path.join(addon_dir, "__init__.py"),
+        submodule_search_locations=[addon_dir],
+    )
     toothpaste_addon = importlib.util.module_from_spec(spec)
     sys.modules['toothpaste_addon'] = toothpaste_addon
     spec.loader.exec_module(toothpaste_addon)

@@ -16,3 +16,8 @@ class InvalidSVGError(ToothPasteError):
 class ClipboardError(ToothPasteError):
     """Raised when clipboard access fails or contains invalid data."""
     pass
+
+
+class ImportContentError(ToothPasteError):
+    """Raised when an SVG parses correctly but holds nothing ToothPaste can import."""
+    pass

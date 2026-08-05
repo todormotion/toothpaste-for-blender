@@ -1,6 +1,6 @@
 # SVG Support Limitations
 
-ToothPaste for Blender implements a practical subset of SVG import behavior for Blender 4.3+ including Blender 5.1 (Grease Pencil v3).
+ToothPaste for Blender implements a practical subset of SVG import behavior for Blender 5.0+ including Blender 5.2 LTS (Grease Pencil v3).
 
 ## Supported
 
@@ -52,6 +52,15 @@ Current limitation:
 
 - Transform-heavy SVGs may still import with differences
 - Complex viewBox/unit setups can produce scale/position mismatches
+
+## File Import and Drag & Drop
+
+- Only `.svg` files are handled; PDF and AI files are not supported
+- Imported artwork is copied into the scene, not linked to the source file, so
+  later edits to the `.svg` are not picked up
+- Dropping an SVG shows Blender's drop menu whenever more than one importer
+  claims the extension; `SVG (ToothPaste)` is the ToothPaste entry
+- Grease Pencil layer groups are not created for groups holding a single object
 
 ## Performance Caveats
 

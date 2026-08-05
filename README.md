@@ -1,10 +1,10 @@
-# ToothPaste for Blender v1.1.5
+# ToothPaste for Blender v1.1.6
 
-Paste SVG content from clipboard into Blender as Grease Pencil, Curves, Text, and Images.
+Paste or import SVG content into Blender as Grease Pencil, Curves, Text, and Images.
 
 ## Current Scope
 
-ToothPaste is focused on Blender 4.3+ (Grease Pencil v3) and supports practical SVG copy/paste workflows from:
+ToothPaste is focused on Blender 5.0+ including Blender 5.2 LTS (Grease Pencil v3) and supports practical SVG copy/paste and file import workflows from:
 - Affinity Designer
 - Adobe Illustrator
 - Figma
@@ -12,9 +12,13 @@ ToothPaste is focused on Blender 4.3+ (Grease Pencil v3) and supports practical 
 
 ## Features
 
-- Blender 5.1 support
-- Materials now transfer from SVG to Grease Pencil correctly and stay editable after import
-- Multilevel masks are now supported
+- Blender 5.2 LTS support
+- Import SVG files from `File > Import > SVG (ToothPaste)`
+- Drag and drop an SVG file into the viewport and pick `SVG (ToothPaste)` from Blender's drop menu
+- Materials transfer from SVG to Grease Pencil correctly and stay editable after import
+- Multilevel masks are supported
+- Inkscape clipboard paste prioritizes SVG/vector data over image clipboard flavors
+- Select or deselect every stroke on the active Grease Pencil layer, from Object Data Properties > Layers
 - Paste SVG from clipboard as Grease Pencil (`Paste as Grease Pencil`)
 - Paste SVG from clipboard as Curves (`Paste as Curves`)
 - Split imported SVG into GP layers (`Split into GP Layers`)
@@ -44,7 +48,7 @@ Important:
 
 ## Requirements
 
-- Blender 4.3.0+ including Blender 5.1
+- Blender 5.0.0+ including Blender 5.2 LTS
 - Windows, macOS, or Linux
 
 ## Installation
@@ -57,6 +61,8 @@ Important:
 
 ## Usage
 
+Paste from the clipboard:
+
 1. Copy SVG content from your design app
 2. Open `View3D > Sidebar (N) > ToothPaste`
 3. Use the grouped tools:
@@ -65,19 +71,38 @@ Important:
    - `Images`
    - `Paste at:`
 
+Import a file:
+
+- `File > Import > SVG (ToothPaste)` opens the file browser, with every ToothPaste option in its sidebar
+- Dragging an `.svg` file into the 3D viewport opens Blender's drop menu; choose `SVG (ToothPaste)` to get the same options as a dialog
+- Both routes start from whatever the sidebar panel is currently set to
+
 ### Panel Groups
 
 - `Grease Pencil`
   - `Paste as Grease Pencil`
   - `Split into GP Layers`
+  - `Create GP Groups`
   - `Split layers into objects`
 - `Curves & Text`
   - `Paste as Curves`
+  - `Stack Curve Objects`
 - `Images`
   - `Paste Image (Clipboard)`
   - `Mesh Plane` / `Reference`
 - `Paste at:`
   - `World Origin` / `Cursor`
+
+### Grease Pencil layer selection
+
+With a Grease Pencil object selected, `Properties > Object Data Properties > Layers`
+gains `Select Strokes` and `Deselect` buttons at the end of the panel. Both act on
+the active layer and are greyed out until one is selected in the list.
+
+### Import options in the file browser and drop dialog
+
+`Import as:` chooses Grease Pencil or Curves. The section that does not apply to
+that choice is dimmed, but every option stays in the same place as in the panel.
 
 ## SVG Support Summary
 
@@ -127,7 +152,18 @@ Important:
 
 ## Changelog
 
-### v1.1.5 (current line)
+### v1.1.6 (current line)
+
+- Added `File > Import > SVG (ToothPaste)` and drag-and-drop import for `.svg` files, sharing one options layout and one import pipeline with clipboard paste
+- Added `Select Strokes` / `Deselect` buttons for the active Grease Pencil layer to `Object Data Properties > Layers`
+- Added Inkscape-friendly clipboard MIME prioritization so SVG/vector clipboard content is preferred over image data
+- Changed minimum Blender version to 5.0 and added Blender 5.2 LTS support
+- Fixed pasted images arriving at pixel dimensions; they now come in at 0.1 scale
+- Fixed SVG text landing far from the workspace; text is now centered on the paste target
+- Fixed Grease Pencil layer groups being created for groups that hold a single object
+- Split the add-on into one module per area of functionality (parser, plan, importer, GP layers, GP materials, operators, UI)
+
+### v1.1.5
 
 - Fixed complex Illustrator Grease Pencil imports where top-level clipping could hide the whole object
 - Fixed non-split Figma Grease Pencil imports so group-level masks/styles are preserved
