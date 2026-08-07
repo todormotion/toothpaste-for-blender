@@ -61,8 +61,12 @@ files = "Import SVG assets and temporary files for text and image support"
 paths_exclude_pattern = [
   "__pycache__/",
   "/.git/",
+  "/.gitignore",
   "/*.zip",
   "images/",
   "*.psd",
   "*.kra",
+  "/toothpaste_tests/",
+  "/run_tests_simple.py",
+  ".DS_Store",
 ]
