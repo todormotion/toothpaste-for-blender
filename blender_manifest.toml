@@ -10,7 +10,7 @@ maintainer = "Todor Hlebarov <todor@cosmonavt.studio>"
 type = "add-on"
 
 # # Optional: link to documentation, support, source files, etc
-website = "https://gitlab.com/todor.motion/toothpaste-for-blender"
+website = "https://github.com/todormotion/toothpaste-for-blender"
 
 # # Optional: tag list defined by Blender and server, see:
 # # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
