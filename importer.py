@@ -11,8 +11,9 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set, Tuple
 
 import bpy
+from mathutils import Vector
 
-from .constants import GP_TYPE
+from .constants import CURVE_SIZE_FACTOR, GP_IMPORT_SCALE, GP_TYPE, SVG_NS
 from .exceptions import ImportContentError
 from .gp_layers import _apply_gp_masks_and_holdout
 from .gp_materials import _apply_gp_materials, _ensure_gp_draw_uses_material_color
@@ -21,7 +22,6 @@ from .obj_text import create_text_from_svg
 from .properties import ImportSettings
 from .scene_utils import (
     _move_objects_to_collection,
-    _move_objects_to_target,
     _new_scene_collections,
     _new_scene_objects,
     _operator_supported_kwargs,
@@ -29,8 +29,12 @@ from .scene_utils import (
     _scene_object_pointers,
     _stack_curve_batches,
     _stack_curve_objects,
+    _unlink_collection_from_tree,
     _write_temp_svg,
+    place_import_block,
+    scale_curve_objects,
 )
+from .svg_frame import SvgFrame, fallback_frame, view_origin
 from .svg_plan import _build_svg_document, _prepare_import_plan
 
 
@@ -59,6 +63,10 @@ def import_svg_via_tempfile(
                 bpy.ops.wm.grease_pencil_import_svg,
                 {
                     "filepath": tmp_path,
+                    "scale": GP_IMPORT_SCALE,
+                    # keep art at its SVG coordinates so text and images line up with it;
+                    # the whole block is centred on the paste target afterwards
+                    "recenter_bounds": False,
                     "split_layers": gp_split_layers,
                     "separate_layers": gp_split_layers,
                     "separate_layer": gp_split_layers,
@@ -88,21 +96,123 @@ def import_svg_via_tempfile(
                 pass
 
 
-def _place_created_objects(
-    scene: bpy.types.Scene,
-    main_objects: List[bpy.types.Object],
-    text_objects: List[bpy.types.Object],
-    paste_location: str,
-) -> None:
-    """
-    Move created objects to the paste target.
+PROBE_SIZE = 100.0
 
-    Geometry and images move together so their relative layout survives. Text is
-    centered on its own, because SVG text coordinates routinely place it far
-    away from the artwork it belongs to.
+
+def _gp_corner_and_width(gp_obj: bpy.types.Object) -> Optional[Tuple[float, float, float]]:
+    """Top-left corner (X, Y in the flat frame) and width of imported Grease Pencil points."""
+    xs: List[float] = []
+    zs: List[float] = []
+    for layer in gp_obj.data.layers:
+        for frame in layer.frames:
+            positions = frame.drawing.attributes.get("position")
+            if positions is None:
+                continue
+            for point in positions.data:
+                world = gp_obj.matrix_world @ Vector(point.vector)
+                xs.append(world[0])
+                zs.append(world[2])
+    if not xs:
+        return None
+    return min(xs), max(zs), max(xs) - min(xs)
+
+
+def _curve_corner_and_width(curve_obj: bpy.types.Object) -> Optional[Tuple[float, float, float]]:
+    corners = [curve_obj.matrix_world @ Vector(corner) for corner in curve_obj.bound_box]
+    xs = [corner[0] for corner in corners]
+    ys = [corner[1] for corner in corners]
+    return min(xs), max(ys), max(xs) - min(xs)
+
+
+def _remove_probe_leftovers(
+    context: bpy.types.Context,
+    new_objects: List[bpy.types.Object],
+    datablocks_before: Dict[str, Set[int]],
+    collections_before: Set[int],
+) -> None:
+    """Delete everything a probe import created, including its data and collections."""
+    for obj in new_objects:
+        try:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        except Exception:
+            pass
+    for collection in _new_scene_collections(context.scene, collections_before):
+        try:
+            _unlink_collection_from_tree(context.scene.collection, collection)
+            bpy.data.collections.remove(collection)
+        except Exception:
+            pass
+    # Object data first: it holds the materials, which are only unused once it is gone.
+    for name, collection in _probe_datablock_collections():
+        before = datablocks_before.get(name, set())
+        for datablock in list(collection):
+            if datablock.as_pointer() not in before and datablock.users == 0:
+                try:
+                    collection.remove(datablock)
+                except Exception:
+                    pass
+
+
+def _probe_datablock_collections() -> List[Tuple[str, object]]:
+    """(name, bpy.data collection) pairs a probe import can create, ordered object data first."""
+    names = ("grease_pencils", "grease_pencils_v3", "curves", "materials")
+    return [(name, getattr(bpy.data, name)) for name in names if hasattr(bpy.data, name)]
+
+
+def probe_frame(context: bpy.types.Context, root: ET.Element, import_mode: str) -> SvgFrame:
     """
-    _move_objects_to_target(main_objects, scene, paste_location)
-    _move_objects_to_target(text_objects, scene, paste_location)
+    Measure where Blender's importer puts this SVG's canvas.
+
+    A square of known size at the canvas corner is imported through the same
+    importer, with the same root attributes (viewBox, width, height), and then
+    deleted. Where its corner landed, and how large it came out, is exactly how
+    the artwork was placed, whatever the file's units or viewBox. Falls back to
+    the measured Blender 5.2 values if the probe cannot be read.
+    """
+    fallback = fallback_frame(root, import_mode)
+    view_x, view_y = view_origin(root)
+
+    probe_root = ET.Element(root.tag, dict(root.attrib))
+    ET.SubElement(
+        probe_root,
+        f"{{{SVG_NS}}}rect",
+        {"x": repr(view_x), "y": repr(view_y), "width": repr(PROBE_SIZE), "height": repr(PROBE_SIZE), "fill": "#000000"},
+    )
+
+    datablocks_before = {
+        name: {datablock.as_pointer() for datablock in collection}
+        for name, collection in _probe_datablock_collections()
+    }
+    collections_before = _scene_collection_pointers(context.scene)
+    new_objects: List[bpy.types.Object] = []
+    try:
+        new_objects = import_svg_via_tempfile(
+            context, ET.tostring(probe_root, encoding="unicode"), import_mode=import_mode
+        )
+        if import_mode == "GP":
+            target = next((obj for obj in new_objects if obj.type == GP_TYPE), None)
+            measured = _gp_corner_and_width(target) if target else None
+        else:
+            target = next((obj for obj in new_objects if obj.type == "CURVE"), None)
+            measured = _curve_corner_and_width(target) if target else None
+    except Exception:
+        measured = None
+    finally:
+        _remove_probe_leftovers(context, new_objects, datablocks_before, collections_before)
+
+    if not measured or measured[2] <= 1e-9:
+        return fallback
+    left, top, width = measured
+    # Curves are scaled up to the Grease Pencil size after import (see
+    # CURVE_SIZE_FACTOR), about the canvas origin, so the frame scales with them.
+    factor = CURVE_SIZE_FACTOR if import_mode == "CURVE" else 1.0
+    return SvgFrame(
+        units_per_user=width / PROBE_SIZE * factor,
+        origin_x=left * factor,
+        origin_y=top * factor,
+        view_x=view_x,
+        view_y=view_y,
+    )
 
 
 def import_svg_as_grease_pencil(
@@ -121,6 +231,7 @@ def import_svg_as_grease_pencil(
     if not has_importable and not has_extras:
         raise ImportContentError("No valid SVG layers, text, or image content found.")
 
+    frame = probe_frame(context, root, "GP") if has_extras else fallback_frame(root, "GP")
     gp_objects: List[bpy.types.Object] = []
     before_collections = _scene_collection_pointers(context.scene)
 
@@ -137,17 +248,25 @@ def import_svg_as_grease_pencil(
             _apply_gp_materials(gp_objects[0], plan)
             _ensure_gp_draw_uses_material_color(context)
 
-    text_objects = create_text_from_svg(context.scene, metadata["texts"])
+    warnings: List[str] = []
+    text_objects = create_text_from_svg(
+        context.scene,
+        metadata["texts"],
+        frame,
+        warnings,
+        outlines="GP" if settings.text_mode == "OUTLINES" else None,
+    )
     image_objects = create_images_from_svg(
         context.scene,
         metadata["images"],
         settings.image_paste_mode,
+        frame,
     )
 
-    _place_created_objects(
+    place_import_block(
+        list(gp_objects) + list(text_objects) + list(image_objects),
+        gp_objects,
         context.scene,
-        list(gp_objects) + list(image_objects),
-        text_objects,
         settings.paste_location,
     )
 
@@ -166,6 +285,8 @@ def import_svg_as_grease_pencil(
         "grease_pencil": gp_objects,
         "texts": text_objects,
         "images": image_objects,
+        "warnings": warnings,
+        "frame": frame,
     }
 
 
@@ -177,7 +298,9 @@ def import_svg_as_curves(
     """Import a parsed SVG tree as Curve objects plus text/image extras."""
     plan = _prepare_import_plan(root, split_layers=True)
     metadata = plan["metadata"]
+    has_extras = bool(metadata["texts"] or metadata["images"])
 
+    frame = probe_frame(context, root, "CURVE") if has_extras else fallback_frame(root, "CURVE")
     curve_objects: List[bpy.types.Object] = []
     curve_batches: List[Tuple[Tuple[str, ...], List[bpy.types.Object]]] = []
     before_collections = _scene_collection_pointers(context.scene)
@@ -201,20 +324,24 @@ def import_svg_as_curves(
         if curve_objects:
             curve_batches.append((("Pasted SVG",), list(curve_objects)))
 
-    text_objects = create_text_from_svg(context.scene, metadata["texts"])
+    scale_curve_objects(curve_objects, CURVE_SIZE_FACTOR)
+
+    warnings: List[str] = []
+    text_objects = create_text_from_svg(
+        context.scene,
+        metadata["texts"],
+        frame,
+        warnings,
+        outlines="CURVE" if settings.text_mode == "OUTLINES" else None,
+    )
     image_objects = create_images_from_svg(
         context.scene,
         metadata["images"],
         settings.image_paste_mode,
+        frame,
     )
 
-    _place_created_objects(
-        context.scene,
-        list(curve_objects) + list(image_objects),
-        text_objects,
-        settings.paste_location,
-    )
-
+    # Stack before the block is centred, so the stack stays centred on the target.
     if settings.curve_stack_enabled:
         if settings.curve_stack_keep_groups:
             grouped_batches: Dict[Tuple[str, ...], List[bpy.types.Object]] = {}
@@ -236,6 +363,13 @@ def import_svg_as_curves(
                 settings.curve_stack_depth,
             )
 
+    place_import_block(
+        list(curve_objects) + list(text_objects) + list(image_objects),
+        [],
+        context.scene,
+        settings.paste_location,
+    )
+
     new_collections = _new_scene_collections(context.scene, before_collections)
     _move_objects_to_collection(context.scene, curve_objects, "Pasted SVG", new_collections)
     _move_objects_to_collection(context.scene, text_objects, "Pasted Text")
@@ -249,7 +383,18 @@ def import_svg_as_curves(
         "curves": curve_objects,
         "texts": text_objects,
         "images": image_objects,
+        "warnings": warnings,
+        "frame": frame,
     }
+
+
+def report_warnings(operator: bpy.types.Operator, warnings: List[str], limit: int = 4) -> None:
+    """Show import warnings (missing fonts, mixed text styles) without flooding the status bar."""
+    unique = list(dict.fromkeys(warnings))
+    for message in unique[:limit]:
+        operator.report({"WARNING"}, message)
+    if len(unique) > limit:
+        operator.report({"WARNING"}, f"...and {len(unique) - limit} more import warnings")
 
 
 def import_svg_root(

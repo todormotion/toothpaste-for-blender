@@ -37,8 +37,15 @@ Current limitation:
 
 ### Text
 
-- Basic text content and position are supported
-- Advanced text layout (`tspan` nesting behavior, textPath, tracking, baseline shifts) is limited
+- Text is rebuilt with the font the SVG names, found among the fonts installed on your computer; an SVG does not contain the font itself
+- If the font is not installed, Blender's default font is used and a warning is shown
+- One font and size per text object: text mixing several fonts or sizes uses the first, and a warning is shown
+- Position, lines, alignment, rotation, size and colour are supported; letter spacing, `textPath` and baseline shifts are not
+- Text that the source app already converted to shapes cannot be turned back into text
+- Variable fonts load at their default weight
+- Editable text is a mesh-type object: Blender's final renders draw Grease Pencil over mesh objects whatever their depth, so editable text over Grease Pencil artwork is visible in the viewport but not in a render. Use `Text > Grease Pencil` for text that has to render
+- Curves are resized after Blender imports them, to match the Grease Pencil size. Blender's own curve importer is untouched, so the size is exactly 9.375x its output; `dev/test_blender.py` checks this against each Blender version
+- Blender's Curve importer ignores some `viewBox` details, so the artwork it places can differ from the SVG; text and images follow wherever the importer put it
 
 ## Not Fully Supported
 

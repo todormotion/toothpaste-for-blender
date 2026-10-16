@@ -11,10 +11,11 @@ import bpy
 
 from .clipboard import get_clipboard_svg
 from .exceptions import ClipboardError, ImportContentError, InvalidSVGError
-from .importer import import_svg_as_curves, import_svg_as_grease_pencil
+from .importer import import_svg_as_curves, import_svg_as_grease_pencil, report_warnings
 from .obj_images import _create_image_object, paste_image_from_clipboard_builtin
 from .properties import ImportSettings
-from .scene_utils import _move_objects_to_collection, _move_objects_to_target
+from .scene_utils import _move_objects_to_collection, place_import_block
+from .svg_frame import CLIPBOARD_FRAME
 from .svg_parser import parse_svg_root
 
 
@@ -44,6 +45,7 @@ class TOOTHPASTE_OT_paste_svg(bpy.types.Operator):
             self.report({"ERROR"}, f"Import failed: {exc}")
             return {"CANCELLED"}
 
+        report_warnings(self, result.get("warnings", []))
         self.report(
             {"INFO"},
             "Imported GP: {}, Text: {}, Images: {}".format(
@@ -81,6 +83,7 @@ class TOOTHPASTE_OT_paste_svg_curve(bpy.types.Operator):
             self.report({"ERROR"}, f"Curve import failed: {exc}")
             return {"CANCELLED"}
 
+        report_warnings(self, result.get("warnings", []))
         self.report(
             {"INFO"},
             "Imported Curves: {}, Text: {}, Images: {}".format(
@@ -119,12 +122,14 @@ class TOOTHPASTE_OT_paste_clipboard_image(bpy.types.Operator):
                 image,
                 item,
                 context.scene.toothpaste_image_paste_mode,
+                CLIPBOARD_FRAME,
             )
             if obj is None:
                 self.report({"ERROR"}, "Failed to create image object.")
                 return {"CANCELLED"}
-            _move_objects_to_target(
+            place_import_block(
                 [obj],
+                [],
                 context.scene,
                 context.scene.toothpaste_paste_location,
             )

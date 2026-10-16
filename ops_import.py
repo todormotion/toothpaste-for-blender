@@ -15,7 +15,7 @@ from bpy.props import CollectionProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
 from .exceptions import ImportContentError, InvalidSVGError
-from .importer import import_svg_root
+from .importer import import_svg_root, report_warnings
 from .properties import (
     OPTION_KEYS,
     SCENE_PREFIX,
@@ -27,6 +27,7 @@ from .properties import (
     make_curve_stack_keep_groups_prop,
     make_image_paste_mode_prop,
     make_import_mode_prop,
+    make_text_mode_prop,
     make_paste_location_prop,
     make_split_into_gp_layers_prop,
 )
@@ -63,6 +64,7 @@ class TOOTHPASTE_OT_import_svg(bpy.types.Operator, ImportHelper):
 
     # Same options as the sidebar panel, in the same order.
     import_mode: make_import_mode_prop()
+    text_mode: make_text_mode_prop()
     split_into_gp_layers: make_split_into_gp_layers_prop()
     create_gp_groups: make_create_gp_groups_prop()
     curve_stack_enabled: make_curve_stack_enabled_prop()
@@ -96,13 +98,7 @@ class TOOTHPASTE_OT_import_svg(bpy.types.Operator, ImportHelper):
     def draw(self, context: bpy.types.Context):
         from .ui_panels import draw_toothpaste_options
 
-        draw_toothpaste_options(
-            self.layout,
-            self,
-            prefix="",
-            paste_buttons=False,
-            import_mode=self.import_mode,
-        )
+        draw_toothpaste_options(self.layout, self, prefix="", paste_buttons=False)
 
     def _resolve_paths(self) -> List[str]:
         """Collect every SVG path this invocation should import."""
@@ -133,7 +129,8 @@ class TOOTHPASTE_OT_import_svg(bpy.types.Operator, ImportHelper):
                 failures.append(f"{os.path.basename(path)}: {exc}")
                 continue
             try:
-                import_svg_root(context, root, self.import_mode, settings)
+                result = import_svg_root(context, root, self.import_mode, settings)
+                report_warnings(self, result.get("warnings", []))
             except ImportContentError as exc:
                 failures.append(f"{os.path.basename(path)}: {exc}")
                 continue

@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from .constants import INKSCAPE_NS, NS, SUPPORTED_GEOMETRY, SVG_NS, XLINK_NS
 from .exceptions import InvalidSVGError
 from .svg_geometry import convert_shape_to_path
+from .svg_text import collect_text_items
 from .svg_utils import (
     _clamp01,
     _clone_xml_element,
@@ -27,6 +28,7 @@ from .svg_utils import (
     _parse_svg_color,
     _parse_svg_number,
     _parse_transform_attr,
+    build_stacking_hint,
 )
 
 
@@ -230,35 +232,11 @@ def _collect_defs_maps(root: ET.Element) -> Tuple[Dict[str, ET.Element], Dict[st
     return mask_defs, clip_defs
 
 
-def _collect_text_items(root: ET.Element) -> List[Dict[str, object]]:
-    """Extract SVG text nodes for FONT object creation."""
-    text_items: List[Dict[str, object]] = []
-    for index, text_node in enumerate(root.findall(".//svg:text", NS)):
-        body = "".join(text_node.itertext()).strip()
-        if not body:
-            continue
-        style = _parse_style(text_node.get("style"))
-        font_size = _first_list_number(
-            text_node.get("font-size") or style.get("font-size"),
-            default=16.0,
-        )
-        text_items.append(
-            {
-                "name": text_node.get("id") or f"Text_{index + 1}",
-                "body": body,
-                "x": _first_list_number(text_node.get("x"), default=0.0),
-                "y": _first_list_number(text_node.get("y"), default=0.0),
-                "font_size": font_size,
-                "font_family": (text_node.get("font-family") or style.get("font-family") or "").strip(),
-            }
-        )
-    return text_items
-
-
 def _collect_image_items(root: ET.Element) -> List[Dict[str, object]]:
     """Extract SVG image nodes."""
     image_items: List[Dict[str, object]] = []
     image_index = 0
+    above = build_stacking_hint(root)
 
     def walk(node: ET.Element, definition_context: bool = False) -> None:
         nonlocal image_index
@@ -278,6 +256,7 @@ def _collect_image_items(root: ET.Element) -> List[Dict[str, object]]:
                         "y": _parse_svg_number(node.get("y"), 0.0),
                         "width": _parse_svg_number(node.get("width"), 1.0),
                         "height": _parse_svg_number(node.get("height"), 1.0),
+                        "above_art": above(node),
                     }
                 )
         for child in list(node):
@@ -303,7 +282,7 @@ def _collect_svg_metadata(root: ET.Element) -> Dict[str, object]:
         "mask_defs": mask_defs,
         "clip_defs": clip_defs,
         "gradient_defs": gradient_defs,
-        "texts": _collect_text_items(root),
+        "texts": collect_text_items(root),
         "images": _collect_image_items(root),
         "has_drawables": any(layer["has_geometry"] for layer in layers),
     }

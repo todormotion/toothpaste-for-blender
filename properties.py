@@ -11,12 +11,16 @@ from typing import Dict, List, Optional
 
 import bpy
 
+from .gp_tools import on_thickness_changed
+
 # Logical option key -> Scene property name. The import operator uses the bare
 # logical key as its own property name, so one draw function can serve both by
 # swapping the prefix.
 SCENE_PREFIX = "toothpaste_"
 
 OPTION_KEYS = (
+    "import_mode",
+    "text_mode",
     "split_into_gp_layers",
     "create_gp_groups",
     "curve_stack_enabled",
@@ -108,10 +112,40 @@ def make_paste_location_prop():
     )
 
 
+def make_text_mode_prop():
+    return bpy.props.EnumProperty(
+        name="Text",
+        description="How SVG text is brought in",
+        items=[
+            ("TEXT", "Editable Text", "Keep text editable as Blender text objects, using the installed font the SVG names"),
+            (
+                "OUTLINES",
+                "Outlines",
+                "Convert text to shapes (Grease Pencil strokes or curves, matching the output type) so it looks the same on any machine",
+            ),
+        ],
+        default="TEXT",
+    )
+
+
+def make_paste_type_prop():
+    """What the sidebar pastes: Grease Pencil, Curves or a clipboard image."""
+    return bpy.props.EnumProperty(
+        name="Paste As",
+        description="What to create from the clipboard",
+        items=[
+            ("GP", "Grease Pencil", "Paste the SVG as a Grease Pencil object"),
+            ("CURVE", "Curves", "Paste the SVG as Curve objects"),
+            ("IMAGE", "Image", "Paste a bitmap image from the clipboard"),
+        ],
+        default="GP",
+    )
+
+
 def make_import_mode_prop():
     return bpy.props.EnumProperty(
         name="Import As",
-        description="Object type created from the SVG file",
+        description="Object type created from the SVG",
         items=[
             ("GP", "Grease Pencil", "Import the SVG as a Grease Pencil object"),
             ("CURVE", "Curves", "Import the SVG as Curve objects"),
@@ -120,7 +154,11 @@ def make_import_mode_prop():
     )
 
 
+# The sidebar's Paste As tab also offers Image, which the file import dialog
+# (SVG only) does not, so the scene and the dialog use different enums.
 PROPERTY_FACTORIES = {
+    "import_mode": make_paste_type_prop,
+    "text_mode": make_text_mode_prop,
     "split_into_gp_layers": make_split_into_gp_layers_prop,
     "create_gp_groups": make_create_gp_groups_prop,
     "curve_stack_enabled": make_curve_stack_enabled_prop,
@@ -131,11 +169,10 @@ PROPERTY_FACTORIES = {
     "paste_location": make_paste_location_prop,
 }
 
-# Grease Pencil tools panel colors. These live on the Scene because they are a
-# staging area for the "apply to selection" action, not a material property.
+# Grease Pencil edit controls. These live on the Scene because they are a
+# staging area: changing one applies it to the selected points in edit mode.
 GP_TOOL_PROPERTY_NAMES = (
-    "toothpaste_gp_fill_color",
-    "toothpaste_gp_stroke_color",
+    "toothpaste_gp_thickness",
 )
 
 
@@ -165,23 +202,17 @@ def register():
     for key, factory in PROPERTY_FACTORIES.items():
         setattr(bpy.types.Scene, f"{SCENE_PREFIX}{key}", factory())
 
-    bpy.types.Scene.toothpaste_gp_fill_color = bpy.props.FloatVectorProperty(
-        name="Fill Color",
-        description="Fill color applied to Grease Pencil materials",
-        subtype="COLOR_GAMMA",
-        size=4,
+    bpy.types.Scene.toothpaste_gp_thickness = bpy.props.FloatProperty(
+        name="Thickness",
+        description="Line thickness applied to the selected points while in Grease Pencil edit mode",
+        subtype="DISTANCE",
+        unit="LENGTH",
         min=0.0,
-        max=1.0,
-        default=(0.8, 0.8, 0.8, 1.0),
-    )
-    bpy.types.Scene.toothpaste_gp_stroke_color = bpy.props.FloatVectorProperty(
-        name="Stroke Color",
-        description="Stroke color applied to Grease Pencil materials",
-        subtype="COLOR_GAMMA",
-        size=4,
-        min=0.0,
-        max=1.0,
-        default=(0.0, 0.0, 0.0, 1.0),
+        max=1000.0,
+        soft_max=0.05,
+        default=0.01,
+        precision=4,
+        update=on_thickness_changed,
     )
 
 

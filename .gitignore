@@ -2,3 +2,5 @@
 /toothpaste_tests
 __pycache__/
 *.pyc
+# built release archives live here (kept locally, not in git)
+/releases/

@@ -8,7 +8,7 @@ Pure Python: this module must never import bpy.
 import math
 import re
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 
 def _local_name(tag: str) -> str:
@@ -451,3 +451,43 @@ def _extract_mask_clip_refs(element: ET.Element) -> Tuple[Set[str], Set[str]]:
         clip_refs.add(style_clip)
 
     return mask_refs, clip_refs
+
+
+_DEFINITION_TAGS = {"defs", "mask", "clipPath", "symbol", "pattern", "marker"}
+
+
+def build_stacking_hint(root: ET.Element) -> Callable[[ET.Element], bool]:
+    """
+    Tell whether an element is drawn above the artwork, by document order.
+
+    SVG paints in document order, so text or an image that comes after the first
+    drawn shape sits on top of the artwork, while one that comes before every
+    shape (a background photo, say) sits underneath it. Returns a function
+    `above(node)` for that decision.
+    """
+    from .constants import SUPPORTED_GEOMETRY
+
+    order: Dict[int, int] = {}
+    first_shape = [None]
+    counter = [0]
+
+    def walk(node: ET.Element, in_definition: bool) -> None:
+        if not isinstance(node.tag, str):
+            return
+        tag = _local_name(node.tag)
+        order[id(node)] = counter[0]
+        if tag in SUPPORTED_GEOMETRY and not in_definition and first_shape[0] is None:
+            first_shape[0] = counter[0]
+        counter[0] += 1
+        hidden = in_definition or tag in _DEFINITION_TAGS
+        for child in list(node):
+            walk(child, hidden)
+
+    walk(root, False)
+
+    def above(node: ET.Element) -> bool:
+        if first_shape[0] is None:
+            return True
+        return order.get(id(node), counter[0]) > first_shape[0]
+
+    return above

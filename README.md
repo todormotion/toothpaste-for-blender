@@ -1,4 +1,4 @@
-# ToothPaste for Blender v1.1.6
+# ToothPaste for Blender v1.1.7
 
 Paste or import SVG content into Blender as Grease Pencil, Curves, Text, and Images.
 
@@ -12,6 +12,11 @@ ToothPaste is focused on Blender 5.0+ including Blender 5.2 LTS (Grease Pencil v
 
 ## Features
 
+- Editable text in the font the SVG asks for (`Text > Editable Text`), or text turned into Grease Pencil / Curves shapes (`Text > Grease Pencil / Curves`)
+- Grease Pencil Edit panel: `Stroke` / `Fill` / `Both`, thickness, and reverse direction for the selected strokes in Edit Mode
+- One `Paste as:` tab (`Grease Pencil` / `Curves` / `Image`) with a single paste button, showing only the options that apply
+- Text and images land exactly where the SVG puts them, at the same scale as the artwork, and the whole paste is centred on the paste target
+- Grease Pencil, Curves, text and images all lie flat, face up, and come in at the same size, so a paste is one consistent layout
 - Blender 5.2 LTS support
 - Import SVG files from `File > Import > SVG (ToothPaste)`
 - Drag and drop an SVG file into the viewport and pick `SVG (ToothPaste)` from Blender's drop menu
@@ -77,21 +82,42 @@ Import a file:
 - Dragging an `.svg` file into the 3D viewport opens Blender's drop menu; choose `SVG (ToothPaste)` to get the same options as a dialog
 - Both routes start from whatever the sidebar panel is currently set to
 
-### Panel Groups
+### Panel Layout
 
-- `Grease Pencil`
-  - `Paste as Grease Pencil`
-  - `Split into GP Layers`
-  - `Create GP Groups`
-  - `Split layers into objects`
-- `Curves & Text`
-  - `Paste as Curves`
-  - `Stack Curve Objects`
-- `Images`
-  - `Paste Image (Clipboard)`
-  - `Mesh Plane` / `Reference`
-- `Paste at:`
-  - `World Origin` / `Cursor`
+- `Paste as:` `Grease Pencil` | `Curves` | `Image` - picks what to paste; one paste button follows it
+  - Grease Pencil: `Split into GP Layers`, `Create GP Groups`, `Split layers into objects`
+  - Curves: `Stack Curve Objects` (axis, depth, keep same SVG group level)
+  - Both SVG tabs also show `Text` (`Editable Text` | `Grease Pencil` or `Curves`), `SVG images as:` (`Mesh Plane` / `Reference`) and `Paste at:`
+  - Image: `Paste Image (Clipboard)`, `Image as:` (`Mesh Plane` / `Reference`) and `Paste at:`
+- `Paste at:` `World Origin` / `Cursor`
+- `Grease Pencil Edit` (only while a Grease Pencil object is active; controls work in Edit Mode)
+  - `Show`: `Stroke` / `Fill` / `Both` (same as `Stroke > Set Stroke Type`)
+  - `Thickness` slider for the selected points
+  - `Reverse Direction` (same as `Stroke > Switch Direction`)
+
+The file import dialog uses the same layout (without the clipboard `Image` tab, since it imports SVG files).
+
+### Text and fonts
+
+An SVG never contains its fonts. A `<text>` element only carries a font *name* (`font-family`), plus weight and style, so ToothPaste looks that name up among the fonts installed on your computer (system fonts, user fonts and activated Adobe Fonts) and loads the match into Blender.
+
+- Weight and italic are matched too (`font-weight`, `font-style`, and PostScript names such as `Arial-BoldMT`)
+- Several lines, alignment, rotation, size and colour are kept, and the text is sized to its real point size whatever the font (Blender sizes text by each font's bounding box, which ToothPaste compensates for)
+- If a font is not installed, the text is still imported with Blender's default font and a warning names the missing font
+- The first scan of your fonts can take a second; the result is cached for later imports
+- Some apps turn text into shapes before the SVG leaves them (a setting in some, always in others). That text arrives as shapes, not as text
+- `Text > Grease Pencil` / `Curves` converts the text to shapes instead, so it looks identical on any machine
+- Editable text is a regular mesh-type text object. Over Grease Pencil artwork it shows correctly in the viewport, but Blender's final renders draw Grease Pencil over mesh objects whatever their depth, so use `Text > Grease Pencil` when the text has to appear in a render
+
+### Placement and sizes
+
+Blender's two SVG importers place the same file differently (the Curve importer flips the page around its height and treats `viewBox` its own way, the Grease Pencil importer anchors the top-left corner). To keep text and images lined up with the artwork, ToothPaste imports a tiny probe square through the same importer first, measures where its corner landed and how large it came out, deletes it, and positions text and images from that measurement. This works for any `viewBox`, `width`/`height` or units, so text sits where the SVG puts it, at the artwork's scale.
+
+- The whole paste (artwork, text and images) is then centred on the paste target as one block
+- Text and images are given a depth offset of one SVG unit following the SVG's own order: text or an image drawn after a shape sits in front of the artwork, one before every shape (a background photo) sits behind it
+- Curves are scaled up when imported (Blender's curve importer makes an SVG pixel about 9x smaller than its Grease Pencil importer does), so a Curves paste is the same size as a Grease Pencil paste. The size is in the curve data; the object scale stays 1, 1, 1
+- Everything lies flat on the ground plane facing up (+Z). Blender's Grease Pencil importer stands its art upright, so ToothPaste lays it down to match the other types
+- Bitmaps pasted from the clipboard come in at 100 pixels per Blender unit
 
 ### Grease Pencil layer selection
 
@@ -152,7 +178,30 @@ that choice is dimmed, but every option stays in the same place as in the panel.
 
 ## Changelog
 
-### v1.1.6 (current line)
+### v1.1.7 (current line)
+
+**Added**
+
+- Text now imports as editable Blender text in the font the SVG names, found among your installed fonts (system, user and Adobe Fonts), including weight, italic and `.ttc` collections, with line breaks, alignment, rotation, size and colour. Missing fonts and mixed-style text are reported when importing
+- `Text:` `Editable Text` | `Grease Pencil` / `Curves`, to convert text to shapes instead
+- `Grease Pencil Edit` panel with `Stroke` / `Fill` / `Both`, a thickness slider and reverse direction for the selected strokes in Edit Mode
+- `Paste as:` is now a `Grease Pencil | Curves | Image` toggle with one paste button, showing only the options that apply. The file import dialog shares the same layout (without `Image`)
+- `dev/test_blender.py`, an integration test suite (180 checks) to run against each new Blender version
+
+**Changed**
+
+- Grease Pencil, Curves, text and images now all lie flat, face up and come in at the same size. Grease Pencil used to stand upright while curves lay flat, and curves came in about 9x smaller than Grease Pencil
+- Text and images land exactly where the SVG puts them. Their position and size are measured from Blender's own importer, so any `viewBox`, `width`/`height` or units works, and the whole paste is centred on the paste target as one block. Draw order follows the SVG: text or an image drawn after a shape sits in front of it, a background image sits behind
+- Clipboard bitmaps come in at 100 pixels per Blender unit, 1/10 of their previous size
+
+**Fixed**
+
+- Text was the wrong size: Blender scales text differently per font, so text is now sized by each font's own metrics and matches the SVG's point size
+- Text positions ignored nested `transform`s, which is how Affinity and Illustrator write them
+- Reference images were centred on their corner instead of anchored at the top-left
+- A collection-cleanup helper never worked on Blender 5.2
+
+### v1.1.6
 
 - Added `File > Import > SVG (ToothPaste)` and drag-and-drop import for `.svg` files, sharing one options layout and one import pipeline with clipboard paste
 - Added `Select Strokes` / `Deselect` buttons for the active Grease Pencil layer to `Object Data Properties > Layers`

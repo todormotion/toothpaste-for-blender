@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 # Manifest file for a Blender extension
 id = "toothpaste"
-version = "1.1.6"
+version = "1.1.7"
 name = "ToothPaste (Paste SVGs)"
 tagline = "Paste or import SVG as Grease Pencil or Curves"
 maintainer = "Todor Hlebarov <todor@cosmonavt.studio>"
@@ -53,7 +53,7 @@ copyright = [
 #
 [permissions]
 clipboard = "Paste SVG data from Clipboard"
-files = "Import SVG assets and temporary files for text and image support"
+files = "Read SVG files and installed fonts, and keep a font list cache"
 
 # Optional: advanced build settings.
 # https://docs.blender.org/manual/en/dev/advanced/extensions/command_line_arguments.html#command-line-args-extension-build
@@ -68,5 +68,7 @@ paths_exclude_pattern = [
   "*.kra",
   "/toothpaste_tests/",
   "/run_tests_simple.py",
+  "/dev/",
+  "/releases/",
   ".DS_Store",
 ]

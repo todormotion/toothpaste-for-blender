@@ -6,11 +6,13 @@ placement and stacking, plus small defensive property setters shared by the
 Grease Pencil modules.
 """
 
+import math
 import os
 import tempfile
 from typing import Dict, List, Optional, Set, Tuple
 
 import bpy
+from mathutils import Matrix, Vector
 
 
 def _write_temp_svg(svg_data: str) -> str:
@@ -68,9 +70,11 @@ def _unlink_collection_from_tree(parent: bpy.types.Collection, target: bpy.types
     children = getattr(parent, "children", None)
     if children is None:
         return False
-    if target in children:
-        children.unlink(target)
-        return True
+    # Compare objects, not names: `target in children` raises on Blender's collection type.
+    for child in list(children):
+        if child == target:
+            children.unlink(target)
+            return True
     for child in list(children):
         if _unlink_collection_from_tree(child, target):
             return True
@@ -206,25 +210,119 @@ def _paste_target_location(scene: bpy.types.Scene, paste_mode: str) -> Tuple[flo
     return (0.0, 0.0, 0.0)
 
 
-def _move_objects_to_target(objects: List[bpy.types.Object], scene: bpy.types.Scene, paste_mode: str) -> None:
-    """Move a group of objects as a block so their center lands on target."""
-    valid = [obj for obj in objects if obj and hasattr(obj, "location")]
+def _object_world_bounds(
+    obj: bpy.types.Object,
+    depsgraph: bpy.types.Depsgraph,
+) -> Optional[Tuple[Vector, Vector]]:
+    """World-space bounding box of an object, or None when it has no extent."""
+    if obj.type == "EMPTY":
+        image = obj.data if getattr(obj, "empty_display_type", "") == "IMAGE" else None
+        if image is None or not image.size[1]:
+            return None
+        # Mirror how Blender draws an Image Empty: the longer side is the display
+        # size, the other side follows the image's aspect, placed by the offset.
+        size = float(obj.empty_display_size)
+        aspect = image.size[0] / image.size[1]
+        width, height = (size, size / aspect) if aspect >= 1.0 else (size * aspect, size)
+        offset_x, offset_y = obj.empty_image_offset
+        local = [
+            Vector((offset_x * width, offset_y * height, 0.0)),
+            Vector(((offset_x + 1.0) * width, (offset_y + 1.0) * height, 0.0)),
+        ]
+        matrix = obj.matrix_world
+    else:
+        evaluated = obj.evaluated_get(depsgraph)
+        local = [Vector(corner) for corner in evaluated.bound_box]
+        matrix = evaluated.matrix_world
+
+    points = [matrix @ corner for corner in local]
+    if not points:
+        return None
+    low = Vector([min(point[axis] for point in points) for axis in range(3)])
+    high = Vector([max(point[axis] for point in points) for axis in range(3)])
+    return low, high
+
+
+def lay_flat(objects: List[bpy.types.Object], native_gp_objects: List[bpy.types.Object]) -> None:
+    """
+    Lay Grease Pencil art down so everything faces up (+Z).
+
+    Everything ToothPaste builds, and what the curve importer makes, already lies
+    flat in the XY plane facing +Z, while Blender's Grease Pencil importer stands
+    its art up in the XZ plane. Only that art needs turning, around the origin of
+    the SVG canvas, which is where the content was built.
+    """
+    native_ids = {obj.as_pointer() for obj in native_gp_objects}
+    lie_down = Matrix.Rotation(math.radians(-90.0), 4, "X")
+    for obj in objects:
+        if obj.as_pointer() in native_ids:
+            obj.matrix_basis = lie_down @ obj.matrix_basis
+
+
+def center_objects_on_target(
+    objects: List[bpy.types.Object],
+    scene: bpy.types.Scene,
+    paste_mode: str,
+) -> None:
+    """
+    Move the objects, keeping their layout, so the block's centre lands on the target.
+
+    The block is centred on the ground plane; height keeps the content's own
+    offsets (curve stacking) around the target's height.
+    """
+    valid = [obj for obj in objects if obj is not None]
     if not valid:
         return
 
-    count = float(len(valid))
-    center_x = sum(float(obj.location.x) for obj in valid) / count
-    center_y = sum(float(obj.location.y) for obj in valid) / count
-    center_z = sum(float(obj.location.z) for obj in valid) / count
-    target_x, target_y, target_z = _paste_target_location(scene, paste_mode)
-    delta_x = target_x - center_x
-    delta_y = target_y - center_y
-    delta_z = target_z - center_z
+    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    boxes = [box for box in (_object_world_bounds(obj, depsgraph) for obj in valid) if box is not None]
+    if not boxes:
+        return
 
+    low = Vector([min(box[0][axis] for box in boxes) for axis in range(3)])
+    high = Vector([max(box[1][axis] for box in boxes) for axis in range(3)])
+    center = (low + high) * 0.5
+    target = Vector(_paste_target_location(scene, paste_mode))
+
+    delta = target - center
+    delta[2] = target[2]
     for obj in valid:
-        obj.location.x += delta_x
-        obj.location.y += delta_y
-        obj.location.z += delta_z
+        obj.location = obj.location + delta
+
+
+def place_import_block(
+    objects: List[bpy.types.Object],
+    native_gp_objects: List[bpy.types.Object],
+    scene: bpy.types.Scene,
+    paste_mode: str,
+) -> None:
+    """Lay everything flat, then centre it on the paste target."""
+    valid = [obj for obj in objects if obj is not None]
+    lay_flat(valid, native_gp_objects)
+    center_objects_on_target(valid, scene, paste_mode)
+
+
+def scale_curve_objects(objects: List[bpy.types.Object], factor: float) -> None:
+    """
+    Scale curve geometry about the origin, in the curve data.
+
+    The object scale stays (1, 1, 1), as if Object > Apply > Scale had been used.
+    """
+    done: Set[int] = set()
+    for obj in objects:
+        if obj is None or obj.type != "CURVE" or obj.data.as_pointer() in done:
+            continue
+        done.add(obj.data.as_pointer())
+        for spline in obj.data.splines:
+            for point in spline.bezier_points:
+                point.handle_left = point.handle_left * factor
+                point.handle_right = point.handle_right * factor
+                point.co = point.co * factor
+            for point in spline.points:
+                x, y, z, w = point.co
+                point.co = (x * factor, y * factor, z * factor, w)
+        obj.data.update_tag()
 
 
 def _stack_curve_objects(objects: List[bpy.types.Object], axis: str, depth: float) -> None:

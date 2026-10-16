@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 import bpy
 
-from .constants import IMAGE_OBJECT_SCALE
+from .svg_frame import CLIPBOARD_FRAME, SvgFrame
 
 
 def _decode_data_uri_to_temp_image(data_uri: str) -> Optional[bpy.types.Image]:
@@ -74,26 +74,30 @@ def _load_svg_image(href: str) -> Optional[bpy.types.Image]:
     return None
 
 
-def _create_image_empty(scene: bpy.types.Scene, image: bpy.types.Image, item: Dict[str, object]) -> Optional[bpy.types.Object]:
+def _create_image_empty(
+    scene: bpy.types.Scene,
+    image: bpy.types.Image,
+    item: Dict[str, object],
+    frame: SvgFrame = CLIPBOARD_FRAME,
+) -> Optional[bpy.types.Object]:
     """Create IMAGE empty object from parsed SVG image item."""
     try:
         obj = bpy.data.objects.new(item["name"], None)
         obj.empty_display_type = "IMAGE"
         obj.data = image
-        obj.location = (
-            float(item["x"]) * IMAGE_OBJECT_SCALE,
-            -float(item["y"]) * IMAGE_OBJECT_SCALE,
-            0.0,
-        )
+        x, y = frame.point(float(item["x"]), float(item["y"]))
+        obj.location = (x, y, frame.depth(bool(item.get("above_art", True))))
+        # Anchor the image by its top-left corner, like an SVG <image>; Blender's
+        # default would centre it on the object.
+        obj.empty_image_offset = (0.0, -1.0)
 
         # Blender's own Image Empty draws the image at its native aspect from
-        # `empty_display_size` alone, so the scale factor is baked in here
-        # instead of on the object - a non-uniform object.scale would compound
-        # with that built-in aspect handling and squash the shorter axis twice.
+        # `empty_display_size` alone, so the size is baked in here instead of
+        # on the object - a non-uniform object.scale would compound with that
+        # built-in aspect handling and squash the shorter axis twice.
         width = max(float(item["width"]), 0.001)
         height = max(float(item["height"]), 0.001)
-        longest_side = max(width, height)
-        obj.empty_display_size = longest_side * IMAGE_OBJECT_SCALE
+        obj.empty_display_size = frame.length(max(width, height))
         obj.scale = (1.0, 1.0, 1.0)
         scene.collection.objects.link(obj)
         return obj
@@ -142,14 +146,15 @@ def _create_image_plane(
     scene: bpy.types.Scene,
     image: bpy.types.Image,
     item: Dict[str, object],
+    frame: SvgFrame = CLIPBOARD_FRAME,
 ) -> Optional[bpy.types.Object]:
     """Create a mesh plane with image material."""
     try:
-        # The scale factor is baked into the mesh vertices and location here,
+        # The size is baked into the mesh vertices and location here,
         # equivalent to Object > Apply > Scale, so the object itself ends up
-        # at (1, 1, 1) instead of carrying a 0.1 object.scale.
-        width = max(float(item["width"]), 0.001) * IMAGE_OBJECT_SCALE
-        height = max(float(item["height"]), 0.001) * IMAGE_OBJECT_SCALE
+        # at (1, 1, 1) instead of carrying an object.scale.
+        width = frame.length(max(float(item["width"]), 0.001))
+        height = frame.length(max(float(item["height"]), 0.001))
         half_w = width * 0.5
         half_h = height * 0.5
 
@@ -178,11 +183,8 @@ def _create_image_plane(
         mesh.materials.append(material)
 
         obj = bpy.data.objects.new(str(item["name"]), mesh)
-        obj.location = (
-            float(item["x"]) * IMAGE_OBJECT_SCALE + half_w,
-            -float(item["y"]) * IMAGE_OBJECT_SCALE - half_h,
-            0.0,
-        )
+        left, top = frame.point(float(item["x"]), float(item["y"]))
+        obj.location = (left + half_w, top - half_h, frame.depth(bool(item.get("above_art", True))))
         scene.collection.objects.link(obj)
         return obj
     except Exception:
@@ -194,25 +196,32 @@ def _create_image_object(
     image: bpy.types.Image,
     item: Dict[str, object],
     image_mode: str,
+    frame: SvgFrame = CLIPBOARD_FRAME,
 ) -> Optional[bpy.types.Object]:
     """Create either reference image or mesh plane."""
     if image_mode == "MESH_PLANE":
-        return _create_image_plane(scene, image, item)
-    return _create_image_empty(scene, image, item)
+        return _create_image_plane(scene, image, item, frame)
+    return _create_image_empty(scene, image, item, frame)
 
 
 def create_images_from_svg(
     scene: bpy.types.Scene,
     image_items: List[Dict[str, object]],
     image_mode: str,
+    frame: SvgFrame = CLIPBOARD_FRAME,
 ) -> List[bpy.types.Object]:
-    """Create Blender objects for SVG <image> items."""
+    """
+    Create Blender objects for SVG <image> items.
+
+    `frame` is where the artwork from the same SVG was imported, which keeps
+    images lined up with and in proportion to it.
+    """
     created: List[bpy.types.Object] = []
     for item in image_items:
         image = _load_svg_image(str(item["href"]))
         if not image:
             continue
-        obj = _create_image_object(scene, image, item, image_mode)
+        obj = _create_image_object(scene, image, item, image_mode, frame)
         if obj:
             created.append(obj)
     return created

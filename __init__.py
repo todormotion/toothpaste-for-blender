@@ -1,7 +1,7 @@
 """
 ToothPaste for Blender - SVG Clipboard Tools for Grease Pencil and Curves.
 
-V1.1.6 highlights:
+V1.1.7 highlights:
 - Paste SVG as Grease Pencil or Curve objects
 - Import SVG files via File > Import and drag-and-drop
 - Optional split mode for SVG layers on paste
@@ -9,6 +9,8 @@ V1.1.6 highlights:
 - SVG text parsing to Blender FONT objects
 - SVG <image> support for embedded/local images
 - Grease Pencil layer stroke selection in Object Data Properties
+- Editable text with the SVG's own font, or text as outlines
+- Colour, stroke type, thickness and direction for the selected strokes
 
 The add-on is split by functionality: each module owns one concern and this file
 only wires them into Blender. Public helpers are re-exported below so existing
@@ -18,11 +20,11 @@ scripts and tests that imported them from the package keep working.
 bl_info = {
     "name": "ToothPaste for Blender",
     "author": "Cosmonavt",
-    "version": (1, 1, 6),
+    "version": (1, 1, 7),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "location": "View3D > Sidebar > ToothPaste, File > Import > SVG (ToothPaste)",
-    "description": "Paste or import SVG as Grease Pencil or Curves, with layer split, masks, text, and image support.",
+    "description": "Paste or import SVG as Grease Pencil or Curves, with layer split, masks, editable text in the right font, and image support.",
 }
 
 import bpy
@@ -31,7 +33,11 @@ from . import properties
 from .clipboard import get_clipboard_svg
 from .exceptions import ClipboardError, ImportContentError, InvalidSVGError, ToothPasteError
 from .gp_layers import is_valid_gp_object, split_gp_object_layers
-from .gp_tools import TOOTHPASTE_OT_gp_select_layer_strokes
+from .gp_tools import (
+    TOOTHPASTE_OT_gp_reverse_direction,
+    TOOTHPASTE_OT_gp_select_layer_strokes,
+    TOOTHPASTE_OT_gp_set_stroke_type,
+)
 from .importer import (
     import_svg_as_curves,
     import_svg_as_grease_pencil,
@@ -53,6 +59,7 @@ from .ops_paste import (
 )
 from .svg_parser import parse_svg, parse_svg_root, validate_svg_string
 from .ui_panels import (
+    TOOTHPASTE_PT_gp_edit,
     TOOTHPASTE_PT_panel,
     draw_gp_layer_selection,
     draw_toothpaste_options,
@@ -90,8 +97,11 @@ classes = (
     TOOTHPASTE_OT_import_svg,
     TOOTHPASTE_FH_import_svg,
     TOOTHPASTE_OT_gp_select_layer_strokes,
+    TOOTHPASTE_OT_gp_set_stroke_type,
+    TOOTHPASTE_OT_gp_reverse_direction,
     GP_OT_SplitLayers,
     TOOTHPASTE_PT_panel,
+    TOOTHPASTE_PT_gp_edit,
 )
 
 # Blender's Grease Pencil layer list lives here; the stroke selection buttons
